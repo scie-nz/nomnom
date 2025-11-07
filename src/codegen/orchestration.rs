@@ -805,6 +805,7 @@ mod tests {
             python_dependency_imports: None,
             python_rust_shim_output: None,
             python_package_init_output: None,
+            rust_transforms: None,
         };
 
         assert_eq!(config.config_dir, "config/entities");
@@ -883,6 +884,7 @@ mod tests {
             python_dependency_imports: None,
             python_rust_shim_output: None,
             python_package_init_output: None,
+            rust_transforms: None,
         };
 
         let code = generate_lib_rs_full(&config);
