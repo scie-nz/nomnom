@@ -7,16 +7,23 @@ project:
   version: 1.0.0
   description: "TPC-H-style order processing example using nomnom"
 
+# Dependencies
+dependencies:
+  - name: nomnom
+    path: ../../..
+    features: ["python-bridge"]
+
 # Build paths configuration
 paths:
+  source_root: config/examples/tpch
   config_dir: config/examples/tpch/entities
   outputs:
-    rust_entities: config/examples/tpch/src/generated.rs
-    pyo3_bindings: config/examples/tpch/src/generated_bindings.rs
-    diesel_schema: config/examples/tpch/src/schema.rs
-    diesel_models: config/examples/tpch/src/models/mod.rs
-    diesel_operations: config/examples/tpch/src/db/generated_operations.rs
-    diesel_pyo3: config/examples/tpch/src/python/generated_persistence.rs
+    rust_entities: src/generated.rs
+    pyo3_bindings: src/generated_bindings.rs
+    diesel_schema: src/schema.rs
+    diesel_models: src/models/mod.rs
+    diesel_operations: src/db/generated_operations.rs
+    diesel_pyo3: src/python/generated_persistence.rs
 
 # Example usage:
 #

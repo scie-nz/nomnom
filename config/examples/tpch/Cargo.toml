@@ -1,0 +1,43 @@
+[package]
+name = "tpch_example_rust"
+version = "1.0.0"
+edition = "2021"
+description = "TPC-H-style order processing example using nomnom"
+
+[lib]
+name = "_rust"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[[bin]]
+name = "hl7-parser"
+path = "rust_build/src/bin/record_parser.rs"
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+once_cell = "1.19"
+thiserror = "1.0"
+sha1 = "0.10"
+sha2 = "0.10"
+regex = "1.10"
+
+# Diesel ORM with connection pooling
+diesel = { version = "2.3", features = ["postgres", "sqlite", "r2d2", "chrono"] }
+diesel_migrations = "2.1"
+r2d2 = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Nomnom entity framework (runtime with python-bridge feature)
+nomnom = { path = "../../..", features = ["python-bridge"] }
+
+
+[build-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+glob = "0.3"
+nomnom = { path = "../../.." }

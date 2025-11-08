@@ -487,7 +487,7 @@ sha2 = "0.10"
 regex = "1.10"
 
 # Diesel ORM with connection pooling
-diesel = {{ version = "2.1", features = ["mysql", "sqlite", "r2d2", "chrono"] }}
+diesel = {{ version = "2.3", features = ["postgres", "sqlite", "r2d2", "chrono"] }}
 diesel_migrations = "2.1"
 r2d2 = "0.8"
 chrono = {{ version = "0.4", features = ["serde"] }}

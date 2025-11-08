@@ -1,0 +1,60 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tpch-example"
+version = "1.0.0"
+description = "TPC-H-style order processing example using nomnom"
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["data-transformation", "etl", "parsing", "nomnom"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+    "PyYAML>=6.0.2",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-benchmark>=5.0.0",
+]
+dev = [
+    "maturin>=1.0.0",
+    "ruff>=0.1.0",
+]
+
+[tool.maturin]
+module-name = "tpch_example._rust"
+features = ["pyo3/extension-module"]
+include = ["config/**/*.yaml"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = [
+    "--strict-markers",
+    "-ra",
+]
+markers = [
+    "filename_config: marks tests that use filename configuration (deselect with '-m \\\"not filename_config\\\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
