@@ -4,7 +4,6 @@
 //! metadata during message parsing.
 
 use std::collections::HashMap;
-use std::any::Any;
 use serde::{Serialize, Deserialize};
 
 /// Context for entity extraction from a single message.

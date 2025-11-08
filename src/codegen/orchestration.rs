@@ -324,14 +324,9 @@ fn detect_permanent_entities(config_dir: &str) -> Result<Vec<EntityDef>, Box<dyn
     use serde::Deserialize;
 
     #[derive(Deserialize)]
-    struct PersistenceSection {
-        database: Option<serde_yaml::Value>,
-    }
-
-    #[derive(Deserialize)]
     struct EntityWithPersistence {
         name: String,
-        persistence: Option<PersistenceSection>,
+        persistence: Option<serde_yaml::Value>,
     }
 
     #[derive(Deserialize)]
@@ -893,10 +888,10 @@ mod tests {
         assert!(code.contains("pub mod transform_registry;"));
         assert!(code.contains("pub mod schema;"));
         assert!(code.contains("pub mod models;"));
-        assert!(code.contains("pub mod db;"));
+        assert!(code.contains("pub mod db {"));  // Inline module, not separate file
         // python_bindings is not included since python_bindings_output is None
         assert!(!code.contains("pub mod python_bindings;"));
-        assert!(code.contains("pub mod python;"));
+        assert!(code.contains("pub mod python {"));  // Inline module
         assert!(code.contains("pub mod generated;"));
 
         // Check re-exports (now data-driven from dependency_exports)

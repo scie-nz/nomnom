@@ -1,6 +1,6 @@
 //! Integration tests for nomnom runtime and transform modules
 
-use nomnom::runtime::{ExtractionContext, TransformRegistry, TransformDef, TransformLanguage, Implementation, Parameter, ReturnType};
+use nomnom::runtime::{ExtractionContext, TransformRegistryLoader, TransformDef, TransformLanguage, Implementation, Parameter, ReturnType};
 use nomnom::codegen::{generate_rust_transform, generate_pyo3_binding, generate_python_transform};
 
 #[test]
@@ -10,14 +10,14 @@ fn test_extraction_context_basic() {
     ctx.set_context_field("filename".to_string(), "test.csv".to_string());
     assert_eq!(ctx.get_context_field("filename"), Some(&"test.csv".to_string()));
 
-    ctx.set_entity("MPI".to_string(), serde_json::json!({"lastname": "Smith"}));
-    assert!(ctx.has_entity("MPI"));
+    ctx.set_entity("Profile".to_string(), serde_json::json!({"lastname": "Smith"}));
+    assert!(ctx.has_entity("Profile"));
     assert_eq!(ctx.entity_count(), 1);
 }
 
 #[test]
 fn test_transform_registry() {
-    let registry = TransformRegistry::new();
+    let registry = TransformRegistryLoader::new();
 
     assert_eq!(registry.count(), 0);
     assert!(!registry.has_transform("nonexistent"));

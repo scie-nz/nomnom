@@ -1,6 +1,5 @@
 //! Diesel get-or-create operations generation from entity YAML configurations.
 
-use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::error::Error;
@@ -18,8 +17,6 @@ struct DatabaseConfig {
 #[derive(Deserialize)]
 struct PrimaryKeyConfig {
     name: String,
-    #[serde(rename = "type")]
-    key_type: String,
     #[serde(default)]
     autogenerate: bool,
 }
@@ -42,7 +39,6 @@ struct FieldOverride {
 
 #[derive(Deserialize)]
 struct EntityYaml {
-    name: String,
     #[serde(default)]
     persistence: Option<PersistenceConfig>,
 }

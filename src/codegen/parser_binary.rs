@@ -13,21 +13,18 @@
 //! - Persistence config (from entity.persistence.database)
 //! - Unicity fields (from persistence.database.unicity_fields)
 
-use crate::codegen::types::{EntityDef, DatabaseConfig};
+use crate::codegen::types::EntityDef;
 use crate::codegen::utils::to_snake_case;
 use crate::codegen::ProjectBuildConfig;
 use crate::codegen::lineage::{generate_lineage_code, generate_entity_to_fields_helper};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs;
-use std::path::Path;
-use regex::Regex;
+use std::collections::{HashMap, VecDeque};
 
 // Transform registry is now provided by hl7utils
 // No need to discover or generate transforms here
 
 /// Generate the complete parser binary source code
 pub fn generate_parser_binary(
-    config: &ProjectBuildConfig,
+    _config: &ProjectBuildConfig,
     entities: &[EntityDef],
 ) -> Result<String, String> {
     // 1. Find root entity (NO HARDCODING!)

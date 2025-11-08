@@ -2,7 +2,9 @@
 //!
 //! Generates Rust code for inline transforms and PyO3 bindings.
 
-use crate::runtime::transforms::{TransformDef, TransformLanguage, Implementation, Parameter};
+use crate::runtime::transforms::{TransformDef, TransformLanguage, Implementation};
+#[cfg(test)]
+use crate::runtime::transforms::Parameter;
 use std::fmt::Write;
 
 /// Generate Rust code for a transform.

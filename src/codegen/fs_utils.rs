@@ -1,7 +1,7 @@
 //! Filesystem utilities for code generation
 
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self};
 use std::path::Path;
 
 /// Write content to a file, creating parent directories if needed

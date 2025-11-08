@@ -1,6 +1,5 @@
 //! PyO3 persistence bindings generation for Diesel operations.
 
-use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::error::Error;
@@ -10,11 +9,8 @@ use crate::codegen::fs_utils;
 
 #[derive(Deserialize)]
 struct DatabaseConfig {
-    conformant_table: String,
     #[serde(default)]
     autogenerate_conformant_id: bool,
-    #[serde(default)]
-    conformant_id_column: Option<String>,
 }
 
 #[derive(Deserialize)]

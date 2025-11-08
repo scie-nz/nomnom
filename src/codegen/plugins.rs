@@ -136,7 +136,7 @@ impl<'a> CodegenPipeline<'a> {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
         use crate::codegen::rust_codegen::generate_rust_code;
         use crate::codegen::pyo3_codegen::generate_python_bindings;
-        use std::fs;
+        
 
         // Phase 1: Generate Rust entity code
         let rust_output_path = self.output_dir.join("generated.rs");
@@ -182,21 +182,6 @@ impl<'a> CodegenPipeline<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct TestCallbacks {
-        pub python_bindings_called: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    impl CodegenCallbacks for TestCallbacks {
-        fn after_python_bindings(
-            &self,
-            _all_entities: &[EntityDef],
-            _permanent_entities: &[EntityDef],
-            _output_dir: &Path,
-        ) {
-            self.python_bindings_called.store(true, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
 
     #[test]
     fn test_no_op_callbacks() {

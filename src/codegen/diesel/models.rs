@@ -1,6 +1,5 @@
 //! Diesel model generation from entity YAML configurations.
 
-use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::error::Error;
@@ -34,14 +33,11 @@ struct FieldOverride {
     #[serde(rename = "type")]
     field_type: String,
     #[serde(default)]
-    args: Vec<serde_yaml::Value>,
-    #[serde(default)]
     nullable: bool,
 }
 
 #[derive(Deserialize)]
 struct EntityYaml {
-    name: String,
     #[serde(default)]
     persistence: Option<PersistenceConfig>,
 }

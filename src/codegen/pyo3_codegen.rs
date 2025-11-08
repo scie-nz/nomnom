@@ -95,7 +95,7 @@ pub fn generate_python_bindings<W: Write>(
 fn generate_root_python_wrapper<W: Write>(
     writer: &mut W,
     entity: &EntityDef,
-    config: &PyO3Config,
+    _config: &PyO3Config,
 ) -> Result<(), std::io::Error> {
     // Entity names in YAML are already PascalCase, use as-is
     let core_name = format!("{}Core", entity.name);
@@ -264,10 +264,10 @@ fn generate_repeated_for_wrapper<W: Write>(
 /// Generate constructor for single-parent derived entity
 fn generate_single_parent_constructor<W: Write>(
     writer: &mut W,
-    entity: &EntityDef,
+    _entity: &EntityDef,
     core_name: &str,
     parent_name: &str,
-    config: &PyO3Config,
+    _config: &PyO3Config,
 ) -> Result<(), std::io::Error> {
     let parent_snake = to_snake_case(parent_name);
     let parent_py_class = format!("Py{}Core", parent_name);
@@ -293,7 +293,7 @@ fn generate_multi_parent_constructor<W: Write>(
     _entity: &EntityDef,
     core_name: &str,
     parents: &[String],
-    config: &PyO3Config,
+    _config: &PyO3Config,
 ) -> Result<(), std::io::Error> {
     let mut source_params = Vec::new();
     let mut source_args = Vec::new();

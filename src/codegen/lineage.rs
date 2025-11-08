@@ -7,8 +7,6 @@
 //!
 //! Usage: Add `--lineage` flag to parser to enable lineage tracking
 
-use crate::codegen::types::EntityDef;
-use crate::codegen::utils::to_snake_case;
 
 /// Generate lineage-related data structures and functions
 pub fn generate_lineage_code() -> String {

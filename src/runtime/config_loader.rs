@@ -3,7 +3,7 @@
 //! Loads parser configuration from YAML and computes entity extraction order
 //! using topological sort (Kahn's algorithm).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::Path;
 use serde::{Deserialize, Serialize};

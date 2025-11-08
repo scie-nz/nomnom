@@ -1,6 +1,5 @@
 //! Diesel schema generation from entity YAML configurations.
 
-use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::error::Error;
@@ -9,12 +8,8 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct DatabaseConfig {
-    #[serde(default)]
-    legacy_table: Option<String>,
     conformant_table: String,
     conformant_id_column: String,
-    #[serde(default)]
-    unicity_fields: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -22,8 +17,6 @@ struct PrimaryKeyConfig {
     name: String,
     #[serde(rename = "type")]
     key_type: String,
-    #[serde(default)]
-    autogenerate: bool,
 }
 
 #[derive(Deserialize)]
@@ -46,13 +39,10 @@ struct FieldOverride {
     nullable: bool,
     #[serde(default)]
     primary_key: bool,
-    #[serde(default)]
-    index: bool,
 }
 
 #[derive(Deserialize)]
 struct EntityYaml {
-    name: String,
     #[serde(default)]
     persistence: Option<PersistenceConfig>,
 }

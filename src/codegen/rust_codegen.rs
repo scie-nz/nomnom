@@ -26,11 +26,6 @@ impl Default for RustCodegenConfig {
     }
 }
 
-/// Check if entity has any fields with computed_from
-fn entity_has_computed_fields(entity: &EntityDef) -> bool {
-    entity.fields.iter().any(|f| f.computed_from.is_some())
-}
-
 // ============================================================================
 // Transform Function Generation
 // ============================================================================
@@ -150,41 +145,6 @@ fn generate_single_transform<W: Write>(
         }
     }
 
-    writeln!(writer, "}}")?;
-
-    Ok(())
-}
-
-/// Generate a stub for a missing transform
-fn generate_transform_stub<W: Write>(
-    writer: &mut W,
-    name: &str,
-) -> Result<(), std::io::Error> {
-    writeln!(writer, "/// STUB: Transform '{}' not implemented", name)?;
-    writeln!(writer, "///")?;
-    writeln!(writer, "/// This transform is called by generated entities but no implementation")?;
-    writeln!(writer, "/// was provided in nomnom.yaml transforms section.")?;
-    writeln!(writer, "///")?;
-    writeln!(writer, "/// To implement this transform, add it to nomnom.yaml:")?;
-    writeln!(writer, "///")?;
-    writeln!(writer, "/// ```yaml")?;
-    writeln!(writer, "/// transforms:")?;
-    writeln!(writer, "///   rust:")?;
-    writeln!(writer, "///     {}:", name)?;
-    writeln!(writer, "///       args:")?;
-    writeln!(writer, "///         - name: arg1")?;
-    writeln!(writer, "///           type: \"&str\"")?;
-    writeln!(writer, "///       return_type: \"Result<String, String>\"")?;
-    writeln!(writer, "///       code: |")?;
-    writeln!(writer, "///         // Your implementation here")?;
-    writeln!(writer, "///         Ok(\"result\".to_string())")?;
-    writeln!(writer, "/// ```")?;
-    writeln!(writer, "pub fn {}(args: &std::collections::HashMap<String, serde_json::Value>) -> Result<serde_json::Value, String> {{", name)?;
-    writeln!(writer, "    Err(format!(")?;
-    writeln!(writer, "        \"Transform '{}' is not implemented. \\", name)?;
-    writeln!(writer, "         Add it to nomnom.yaml transforms.rust section. \\", )?;
-    writeln!(writer, "         See generated code for example.\"")?;
-    writeln!(writer, "    ))")?;
     writeln!(writer, "}}")?;
 
     Ok(())
@@ -320,7 +280,7 @@ fn generate_root_impl<W: Write>(
     writer: &mut W,
     entity: &EntityDef,
     struct_name: &str,
-    config: &RustCodegenConfig,
+    _config: &RustCodegenConfig,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "impl {} {{", struct_name)?;
 
@@ -368,7 +328,7 @@ fn generate_derived_impl<W: Write>(
     writer: &mut W,
     entity: &EntityDef,
     struct_name: &str,
-    config: &RustCodegenConfig,
+    _config: &RustCodegenConfig,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "impl {} {{", struct_name)?;
 
@@ -431,7 +391,7 @@ fn generate_repeated_impl<W: Write>(
     writer: &mut W,
     entity: &EntityDef,
     struct_name: &str,
-    config: &RustCodegenConfig,
+    _config: &RustCodegenConfig,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "impl {} {{", struct_name)?;
 
@@ -791,8 +751,8 @@ mod tests {
         // Now uses from_sources for consistency (even with single parent)
         assert!(generated.contains("pub fn from_sources("));
         assert!(generated.contains("parent_entity: &ParentEntityCore"));
-        // No transform registry in generated code when no computed_from fields
-        assert!(generated.contains("registry: &()"));
+        // No transform registry parameter when no computed_from fields
+        assert!(!generated.contains("registry"));
     }
 
     #[test]
