@@ -27,13 +27,23 @@ pub fn generate_parser_binary(
     _config: &ProjectBuildConfig,
     entities: &[EntityDef],
 ) -> Result<String, String> {
-    // 1. Find root entity (NO HARDCODING!)
-    let root_entity = entities.iter()
-        .find(|e| e.is_root())
-        .ok_or("No root entity found in entity configurations. Expected entity with type: root")?;
+    // 1. Filter out reference entities - they're not processed by the parser
+    // Reference entities are pre-loaded data (e.g., Customer, Product tables)
+    let processable_entities: Vec<&EntityDef> = entities.iter()
+        .filter(|e| e.source_type.to_lowercase() != "reference")
+        .collect();
 
-    // 2. Compute extraction order (topological sort)
-    let extraction_order = compute_extraction_order(entities, root_entity)?;
+    if processable_entities.is_empty() {
+        return Err("No processable entities found. All entities are reference data.".to_string());
+    }
+
+    // 2. Find root entity from processable entities
+    let root_entity = processable_entities.iter()
+        .find(|e| e.is_root())
+        .ok_or("No root entity found in entity configurations. Expected at least one entity with type: root")?;
+
+    // 3. Compute extraction order (topological sort - only processable entities)
+    let extraction_order = compute_extraction_order(&processable_entities, root_entity)?;
 
     // 3. Identify permanent entities (have persistence config with database, not abstract)
     let permanent_entities: Vec<&EntityDef> = entities.iter()
@@ -59,12 +69,12 @@ pub fn generate_parser_binary(
 
 /// Compute topological ordering of entities for extraction
 fn compute_extraction_order(
-    entities: &[EntityDef],
+    entities: &[&EntityDef],
     root_entity: &EntityDef,
 ) -> Result<Vec<EntityDef>, String> {
     // Build entity name -> entity map
     let entity_map: HashMap<String, EntityDef> = entities.iter()
-        .map(|e| (e.name.clone(), e.clone()))
+        .map(|e| (e.name.clone(), (*e).clone()))
         .collect();
 
     // Build dependency graph (entity -> parents)

@@ -3,8 +3,8 @@
 
 entity:
   name: Product
-  type: root  # Root entity - can be loaded from CSV or JSON
-  doc: "Represents a product that can be ordered"
+  type: reference  # Reference data - loaded separately, not from order processing
+  doc: "Represents a product that can be ordered (reference data)"
 
   fields:
     # Product identification

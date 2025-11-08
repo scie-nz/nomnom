@@ -1,43 +1,41 @@
 [package]
-name = "tpch_example_rust"
-version = "1.0.0"
+name = "nomnom"
+version = "0.1.0"
 edition = "2021"
-description = "TPC-H-style order processing example using nomnom"
-
-[lib]
-name = "_rust"
-path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
-doctest = false
-
-[[bin]]
-name = "hl7-parser"
-path = "rust_build/src/bin/record_parser.rs"
+authors = ["SCIE"]
+description = "General-purpose data transformation and entity framework with YAML-based code generation"
+license = "MIT"
+repository = "https://github.com/scie-nz/nomnom"
 
 [dependencies]
-clap = { version = "4.4", features = ["derive"] }
-pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-once_cell = "1.19"
-thiserror = "1.0"
-sha1 = "0.10"
-sha2 = "0.10"
+indexmap = "2.0"
+convert_case = "0.6"
 regex = "1.10"
 
+# CLI dependencies
+clap = { version = "4.4", features = ["derive"] }
+
 # Diesel ORM with connection pooling
-diesel = { version = "2.1", features = ["mysql", "sqlite", "r2d2", "chrono"] }
-diesel_migrations = "2.1"
+diesel = { version = "2.1", features = ["mysql", "sqlite", "r2d2"] }
 r2d2 = "0.8"
-chrono = { version = "0.4", features = ["serde"] }
 
-# Nomnom entity framework (runtime with python-bridge feature)
-nomnom = { path = "../../nomnom", features = ["python-bridge"] }
+# Optional Python bridge
+pyo3 = { version = "0.20", optional = true, features = ["abi3-py38"] }
 
+[dev-dependencies]
+tempfile = "3.8"
 
-[build-dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_yaml = "0.9"
-glob = "0.3"
-nomnom = { path = "../../nomnom" }
+[features]
+default = []
+python-bridge = ["pyo3"]
+
+[lib]
+name = "nomnom"
+crate-type = ["lib"]
+
+[[bin]]
+name = "nomnom"
+path = "src/bin/nomnom.rs"

@@ -238,7 +238,7 @@ impl OrderCore {
     }
 }
 
-/// Represents a customer who can place orders
+/// Represents a customer who can place orders (reference data)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomerCore {
     /// Unique customer identifier
@@ -259,60 +259,7 @@ pub struct CustomerCore {
     pub comment: Option<String>,
 }
 
-impl CustomerCore {
-    /// Create root entity from raw string input
-    ///
-    /// # Arguments
-    ///
-    /// * `raw_input` - Raw string input to parse
-    pub fn from_string(
-        raw_input: &str,
-    ) -> Result<Self, String> {
-
-        Ok(Self {
-            customer_key,
-            name,
-            address,
-            nation_key,
-            phone,
-            account_balance,
-            market_segment,
-            comment,
-        })
-    }
-
-    /// Convert entity to dictionary/map
-    pub fn to_dict(&self) -> HashMap<String, serde_json::Value> {
-        let mut map = HashMap::new();
-        map.insert("customer_key".to_string(), serde_json::to_value(&self.customer_key).unwrap_or(serde_json::Value::Null));
-        map.insert("name".to_string(), serde_json::to_value(&self.name).unwrap_or(serde_json::Value::Null));
-        map.insert("address".to_string(), serde_json::to_value(&self.address).unwrap_or(serde_json::Value::Null));
-        map.insert("nation_key".to_string(), serde_json::to_value(&self.nation_key).unwrap_or(serde_json::Value::Null));
-        map.insert("phone".to_string(), serde_json::to_value(&self.phone).unwrap_or(serde_json::Value::Null));
-        map.insert("account_balance".to_string(), serde_json::to_value(&self.account_balance).unwrap_or(serde_json::Value::Null));
-        map.insert("market_segment".to_string(), serde_json::to_value(&self.market_segment).unwrap_or(serde_json::Value::Null));
-        map.insert("comment".to_string(), serde_json::to_value(&self.comment).unwrap_or(serde_json::Value::Null));
-        map
-    }
-
-    /// Serialize entity to JSON string
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
-    }
-
-    /// Serialize entity to pretty-printed JSON string
-    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    /// Serialize entity to NDJSON line (newline-delimited JSON)
-    pub fn to_ndjson_line(&self) -> Result<String, serde_json::Error> {
-        let json = self.to_json()?;
-        Ok(format!("{}\n", json))
-    }
-}
-
-/// Represents a product that can be ordered
+/// Represents a product that can be ordered (reference data)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductCore {
     /// Unique part/product identifier
@@ -333,60 +280,5 @@ pub struct ProductCore {
     pub retail_price: f64,
     /// Product comments
     pub comment: Option<String>,
-}
-
-impl ProductCore {
-    /// Create root entity from raw string input
-    ///
-    /// # Arguments
-    ///
-    /// * `raw_input` - Raw string input to parse
-    pub fn from_string(
-        raw_input: &str,
-    ) -> Result<Self, String> {
-
-        Ok(Self {
-            part_key,
-            name,
-            manufacturer,
-            brand,
-            product_type,
-            size,
-            container,
-            retail_price,
-            comment,
-        })
-    }
-
-    /// Convert entity to dictionary/map
-    pub fn to_dict(&self) -> HashMap<String, serde_json::Value> {
-        let mut map = HashMap::new();
-        map.insert("part_key".to_string(), serde_json::to_value(&self.part_key).unwrap_or(serde_json::Value::Null));
-        map.insert("name".to_string(), serde_json::to_value(&self.name).unwrap_or(serde_json::Value::Null));
-        map.insert("manufacturer".to_string(), serde_json::to_value(&self.manufacturer).unwrap_or(serde_json::Value::Null));
-        map.insert("brand".to_string(), serde_json::to_value(&self.brand).unwrap_or(serde_json::Value::Null));
-        map.insert("product_type".to_string(), serde_json::to_value(&self.product_type).unwrap_or(serde_json::Value::Null));
-        map.insert("size".to_string(), serde_json::to_value(&self.size).unwrap_or(serde_json::Value::Null));
-        map.insert("container".to_string(), serde_json::to_value(&self.container).unwrap_or(serde_json::Value::Null));
-        map.insert("retail_price".to_string(), serde_json::to_value(&self.retail_price).unwrap_or(serde_json::Value::Null));
-        map.insert("comment".to_string(), serde_json::to_value(&self.comment).unwrap_or(serde_json::Value::Null));
-        map
-    }
-
-    /// Serialize entity to JSON string
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
-    }
-
-    /// Serialize entity to pretty-printed JSON string
-    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    /// Serialize entity to NDJSON line (newline-delimited JSON)
-    pub fn to_ndjson_line(&self) -> Result<String, serde_json::Error> {
-        let json = self.to_json()?;
-        Ok(format!("{}\n", json))
-    }
 }
 
