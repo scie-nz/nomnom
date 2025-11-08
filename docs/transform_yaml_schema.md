@@ -5,7 +5,7 @@ This document defines the YAML schema for transforms in the nomnom framework.
 ## Overview
 
 Transforms are functions that compute field values from source data. They can be:
-- **Built-in transforms**: Implemented in Rust (e.g., `extract_from_hl7_segment`)
+- **Built-in transforms**: Implemented in Rust (e.g., `extract_field`, `parse_date`)
 - **Custom transforms**: Inline code in YAML (Rust or Python)
 - **Transform chains**: Transforms that call other transforms
 
@@ -22,18 +22,18 @@ Transforms are defined in two places:
 
 ```yaml
 transform:
-  name: extract_from_hl7_segment
+  name: extract_field
   language: rust  # or 'python'
-  doc: "Extract value from HL7 segment using path notation"
+  doc: "Extract value from structured data using path notation"
 
   parameters:
-    - name: segment
+    - name: data
       type: String
-      doc: "Raw HL7 segment string"
+      doc: "Raw data string"
 
-    - name: segment_path
+    - name: field_path
       type: String
-      doc: "Path notation (e.g., 'DG1.3.1' for DG1-3.1)"
+      doc: "Path notation (e.g., 'field.subfield.index')"
 
   returns:
     type: Option<String>
@@ -54,11 +54,11 @@ fields:
     type: String
     nullable: true
     computed_from:
-      transform: extract_from_hl7_segment
+      transform: extract_field
       sources:
-        - segment  # Variable name from context
+        - data  # Variable name from context
       args:
-        segment_path: DG1.3.1
+        field_path: category.code
 ```
 
 ### Inline Code Transform
@@ -103,13 +103,13 @@ For transforms that need Python runtime (slower but more flexible):
 
 ```yaml
 transform:
-  name: compute_accid
+  name: compute_identifier
   language: python
-  doc: "Compute account ID from multiple sources with fallback logic"
+  doc: "Compute identifier from multiple sources with fallback logic"
 
   parameters:
-    - name: user_account
-      type: UserAccount
+    - name: record
+      type: Record
     - name: default_value
       type: String
 
@@ -120,10 +120,10 @@ transform:
     type: inline
     code: |
       # Python code here
-      if user_account.user_account_number:
-          return user_account.user_account_number.strip()
-      elif user_account.visit_number:
-          return user_account.visit_number.strip()
+      if record.primary_id:
+          return record.primary_id.strip()
+      elif record.secondary_id:
+          return record.secondary_id.strip()
       else:
           return default_value
 ```
@@ -136,12 +136,12 @@ Call another transform from a transform:
 transform:
   name: extract_and_normalize_date
   language: rust
-  doc: "Extract date from segment and normalize format"
+  doc: "Extract date from data and normalize format"
 
   parameters:
-    - name: segment
+    - name: data
       type: String
-    - name: segment_path
+    - name: field_path
       type: String
 
   returns:
@@ -150,10 +150,10 @@ transform:
   implementation:
     type: reference
     steps:
-      - transform: extract_from_hl7_segment
+      - transform: extract_field
         args:
-          segment: $segment
-          segment_path: $segment_path
+          data: $data
+          field_path: $field_path
         output: raw_date
 
       - transform: parse_custom_date
@@ -165,67 +165,6 @@ transform:
 ```
 
 ## Built-in Transforms
-
-### structured data-Specific Transforms
-
-#### extract_from_hl7_segment
-
-Extract value from HL7 segment using path notation.
-
-```yaml
-computed_from:
-  transform: extract_from_hl7_segment
-  sources:
-    - segment
-  args:
-    segment_path: "DG1.3.1"  # Extract DG1-3.1
-```
-
-**Parameters:**
-- `segment: String` - Raw HL7 segment string
-- `segment_path: String` - Path notation (e.g., "DG1.3.1")
-
-**Returns:** `Option<String>`
-
-**Path Format:**
-- `SEGMENT.field` - Extract field (1-based)
-- `SEGMENT.field.component` - Extract component (1-based)
-- `SEGMENT.field.component.subcomponent` - Extract subcomponent (1-based)
-
-#### build_segment_index
-
-Build segment index from raw structured data message.
-
-```yaml
-computed_from:
-  transform: build_segment_index
-  sources:
-    - raw_message
-```
-
-**Parameters:**
-- `raw_message: String` - Raw structured data message
-
-**Returns:** `HashMap<String, Vec<String>>` - Maps segment type to list of segments
-
-#### extract_msh_field
-
-Extract field from MSH segment (special numbering).
-
-```yaml
-computed_from:
-  transform: extract_msh_field
-  sources:
-    - raw_message
-  args:
-    field_index: 9  # MSH-9
-```
-
-**Parameters:**
-- `raw_message: String` - Raw structured data message
-- `field_index: usize` - Field number (1-based)
-
-**Returns:** `Option<String>`
 
 ### Generic Transforms
 
@@ -276,14 +215,14 @@ use nomnom::TransformRegistry;
 let mut registry = TransformRegistry::new();
 
 // Register built-in transforms
-registry.register_builtin("extract_from_hl7_segment", extract_from_hl7_segment);
-registry.register_builtin("build_segment_index", build_segment_index);
+registry.register_builtin("extract_field", extract_field);
+registry.register_builtin("parse_date", parse_date);
 
 // Load custom transforms from YAML
 registry.load_transforms_from_dir("config/transforms/")?;
 
 // Use in entity extraction
-let value = registry.call("extract_from_hl7_segment", args)?;
+let value = registry.call("extract_field", args)?;
 ```
 
 ## Code Generation
@@ -385,37 +324,41 @@ mod tests {
 }
 ```
 
-## Migration Path
+## Best Practices
 
-Existing transforms (Python functions) will be migrated to YAML in phases:
+When creating transforms:
 
-1. **Extract current Python transforms** from `extraction_functions.py`
-2. **Convert to inline Python transforms** in YAML (no behavior change)
-3. **Port to Rust** for performance (optional, can stay Python)
-4. **Delete Python source files** once YAMLs complete
+1. **Start with inline Python** for rapid prototyping
+2. **Convert to Rust** for performance-critical transforms
+3. **Add tests** to ensure correctness
+4. **Document parameters** clearly
+5. **Use descriptive names** that indicate the transform's purpose
 
-Example migration:
+Example progression:
 
-**Before (Python):**
-```python
-# extraction_functions.py
-def compute_accid(user_account, default_value=""):
-    if user_account.user_account_number:
-        return user_account.user_account_number.strip()
-    return default_value
+**Stage 1: Inline Python (rapid prototyping)**
+```yaml
+transform:
+  name: compute_identifier
+  language: python
+  implementation:
+    type: inline
+    code: |
+      if record.primary_id:
+          return record.primary_id.strip()
+      return default_value
 ```
 
-**After (YAML):**
+**Stage 2: Add tests and documentation**
 ```yaml
-# config/transforms/compute_accid.yaml
 transform:
-  name: compute_accid
+  name: compute_identifier
   language: python
-  doc: "Compute account ID with fallback logic"
+  doc: "Compute identifier with fallback logic"
 
   parameters:
-    - name: user_account
-      type: UserAccount
+    - name: record
+      type: Record
     - name: default_value
       type: String
       default: ""
@@ -426,14 +369,25 @@ transform:
   implementation:
     type: inline
     code: |
-      if user_account.user_account_number:
-          return user_account.user_account_number.strip()
+      if record.primary_id:
+          return record.primary_id.strip()
       return default_value
 
   tests:
-    - name: test_with_account_number
+    - name: test_with_primary_id
       args:
-        user_account: {user_account_number: "ACC123"}
+        record: {primary_id: "ID123"}
         default_value: "DEFAULT"
-      expected: "ACC123"
+      expected: "ID123"
+```
+
+**Stage 3: Port to Rust (optional)**
+```rust
+// For performance-critical code
+pub fn compute_identifier(record: &Record, default_value: &str) -> String {
+    record.primary_id
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| default_value.to_string())
+}
 ```

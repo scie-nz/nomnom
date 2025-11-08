@@ -2,9 +2,9 @@
 
 ## Overview
 
-Nomnom is a general-purpose, format-agnostic data transformation and entity framework library extracted from the HL7 ingestion system. It provides type-safe, declarative data transformation pipelines from YAML configurations.
+Nomnom is a general-purpose, format-agnostic data transformation and entity framework library. It provides type-safe, declarative data transformation pipelines from YAML configurations.
 
-**Status**: ✅ Extracted and implemented (see `nomnom/` crate in repository root)
+**Status**: ✅ Implemented and ready for use
 
 ---
 
@@ -29,12 +29,6 @@ nomnom/                          (Generic framework library)
 ├── Derivation patterns
 ├── Field extraction abstractions
 └── Serialization framework
-
-data_processor/                   (structured data-specific implementation)
-├── Depends on: nomnom
-├── structured data-specific transforms
-├── Healthcare domain entities
-└── structured data message parsing
 ```
 
 ---
@@ -80,43 +74,27 @@ nomnom build-from-config --config nomnom.yaml
 ### 4. Multi-Format Support
 
 Nomnom is format-agnostic - use it for:
-- structured data messages (current implementation)
 - CSV files
 - JSON documents
 - XML documents
-- EDI messages
+- Binary message formats
 - Any structured data format
 
 ---
 
 ## Documentation
 
-### Design Documents
+### Getting Started
 
-This directory contains the original design documents for nomnom extraction:
-
-- **[design-nomnom-library.md](design-nomnom-library.md)** - Detailed design proposal (2025-01-24)
-  - Motivation and background
-  - Architecture design
-  - Migration strategy
-  - API examples
-
-- **[nomnom-extraction-plan.md](nomnom-extraction-plan.md)** - Execution summary
-  - High-level architecture
-  - What goes into nomnom vs data_processor
-  - Implementation phases
-
-### Implementation
-
-The nomnom library has been successfully extracted and is located in:
-
-**`nomnom/`** directory at repository root
-
-See `nomnom/README.md` for:
+See the main `README.md` at repository root for:
 - API documentation
 - Usage examples
 - Build instructions
 - Transform YAML schema
+
+### Additional Documentation
+
+- **[transform_yaml_schema.md](transform_yaml_schema.md)** - Detailed transform YAML syntax and examples
 
 ---
 
@@ -124,34 +102,29 @@ See `nomnom/README.md` for:
 
 ### ✅ Completed
 
-- Core entity framework extracted
-- Transform registry system implemented
-- Code generation from YAML configs working
-- CLI tool (`nomnom` binary) functional
+- Core entity framework
+- Transform registry system
+- Code generation from YAML configs
+- CLI tool (`nomnom` binary)
 - Build system unified under `nomnom.yaml`
 - PyO3 bindings for Python integration
 - Diesel ORM code generation
 - Parser binary generation
-
-### 🔄 In Progress
-
-- Documentation improvements
-- Additional transform helpers
-- Performance optimizations
+- Comprehensive test suite (80 tests passing)
 
 ### 🔮 Future Plans
 
-- Extract to separate GitHub repository
 - Publish to crates.io
 - Add support for more data formats
-- Comprehensive test suite
-- Tutorial and examples for non-HL7 use cases
+- Additional transform helpers
+- Performance optimizations
+- Tutorial and examples for various use cases
 
 ---
 
 ## Usage Example
 
-See the HL7 ingestion implementation as a reference example:
+Basic workflow:
 
 1. **Define entities** in `config/entities/*.yaml`
 2. **Define transforms** in `config/nomnom.yaml`
@@ -160,20 +133,6 @@ See the HL7 ingestion implementation as a reference example:
 
 ---
 
-## Related Documentation
-
-- **Main Documentation**: [../README.md](../README.md)
-- **Architecture Overview**: [../ARCHITECTURE.md](../ARCHITECTURE.md)
-- **Archived Design Proposals**: [../archive/design-proposals/](../archive/design-proposals/)
-  - generalize-entity-framework-proposal.md
-  - rust-derived-entities-design.md
-
----
-
 ## Contributing
 
-The nomnom library is actively developed as part of the HL7 ingestion system. Contributions that improve the generic framework (without adding HL7-specific features) are welcome.
-
----
-
-**Note**: This directory consolidates historical design documents. For current nomnom implementation details, see `nomnom/README.md` at the repository root.
+Contributions are welcome! Please see the main repository README for contribution guidelines.
