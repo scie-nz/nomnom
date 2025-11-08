@@ -18,6 +18,7 @@ tpch/
 │   └── product.yaml    # Reference entity (Product)
 ├── nomnom.yaml         # Project configuration with custom transforms
 ├── build.sh            # Build script
+├── test.sh             # Test script
 └── generate_test_data.py  # Test data generator
 ```
 
@@ -34,6 +35,26 @@ This will:
 2. Generate Rust code from YAML entity definitions
 3. Build the TPC-H library (lib_rust.dylib)
 4. Build the record_parser binary
+
+## Testing
+
+Run the test script to verify the parser with random test data:
+
+```bash
+# Run all test modes (JSON, SQL, lineage)
+./test.sh
+
+# Run with specific parser flags
+./test.sh --json-only
+./test.sh --show-lineage
+./test.sh --json-only --lineage
+```
+
+The test script:
+- Generates random TPC-H orders using `generate_test_data.py`
+- Pipes them through the `record_parser` binary
+- Demonstrates all available output modes
+- Forwards any command-line flags to the parser
 
 ## Entity Model
 
@@ -129,17 +150,20 @@ Example lineage tree output:
 # 1. Build the project
 ./build.sh
 
-# 2. Generate test data and parse to JSON
+# 2. Run quick test to verify everything works
+./test.sh
+
+# 3. Generate test data and parse to JSON
 python3 generate_test_data.py --count 5 --seed 123 \
   | ./target/debug/record_parser --json-only \
   > orders.jsonl
 
-# 3. Generate SQL for database insertion
+# 4. Generate SQL for database insertion
 python3 generate_test_data.py --count 5 --seed 123 \
   | ./target/debug/record_parser --sql-only \
   > orders.sql
 
-# 4. View lineage tree
+# 5. View lineage tree
 python3 generate_test_data.py --count 1 \
   | ./target/debug/record_parser --show-lineage
 ```
