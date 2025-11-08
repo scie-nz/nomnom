@@ -19,6 +19,11 @@ tpch/
 ├── nomnom.yaml         # Project configuration with custom transforms
 ├── build.sh            # Build script
 ├── test.sh             # Test script
+├── db.sh               # Database management script
+├── docker-compose.yml  # PostgreSQL database setup
+├── .env.test           # Database connection settings
+├── diesel.toml         # Diesel ORM configuration
+├── migrations/         # Database migrations
 └── generate_test_data.py  # Test data generator
 ```
 
@@ -55,6 +60,84 @@ The test script:
 - Pipes them through the `record_parser` binary
 - Demonstrates all available output modes
 - Forwards any command-line flags to the parser
+
+## Database Testing
+
+A throwaway PostgreSQL database is available via Docker Compose for testing SQL generation and data persistence.
+
+### Database Management
+
+```bash
+# Start the database
+./db.sh start
+
+# Run database migrations
+./db.sh migrate
+
+# Check database status
+./db.sh status
+
+# Open psql shell
+./db.sh shell
+
+# Stop the database
+./db.sh stop
+
+# Reset database (removes all data)
+./db.sh reset
+```
+
+### Database Configuration
+
+- **Host**: localhost
+- **Port**: 5433 (avoids conflicts with system PostgreSQL)
+- **Database**: tpch_db
+- **User**: tpch_user
+- **Password**: tpch_password
+- **Connection String**: `postgres://tpch_user:tpch_password@localhost:5433/tpch_db`
+
+Connection settings are stored in `.env.test`.
+
+### Running Tests with Database
+
+```bash
+# Test with database persistence (generates SQL and loads it into database)
+./test.sh --with-db
+```
+
+This will:
+1. Start the database if not running
+2. Generate test data and convert to SQL
+3. Execute the SQL against the database
+4. Verify data was loaded correctly
+
+### Manual Database Operations
+
+```bash
+# Generate SQL from test data
+python3 generate_test_data.py --count 10 | ./target/debug/record_parser --sql-only > orders.sql
+
+# Load SQL into database
+./db.sh start
+./db.sh migrate
+docker compose exec -T postgres psql -U tpch_user -d tpch_db < orders.sql
+
+# Query the data
+./db.sh shell
+```
+
+In psql:
+```sql
+-- Count orders
+SELECT COUNT(*) FROM orders;
+
+-- Count line items
+SELECT COUNT(*) FROM order_line_items;
+
+-- View sample data
+SELECT * FROM orders LIMIT 5;
+SELECT * FROM order_line_items WHERE order_key = 'ORDER-000001';
+```
 
 ## Entity Model
 
@@ -146,6 +229,8 @@ Example lineage tree output:
 
 ## Example Workflow
 
+### Basic Workflow (No Database)
+
 ```bash
 # 1. Build the project
 ./build.sh
@@ -166,6 +251,30 @@ python3 generate_test_data.py --count 5 --seed 123 \
 # 5. View lineage tree
 python3 generate_test_data.py --count 1 \
   | ./target/debug/record_parser --show-lineage
+```
+
+### Database Workflow
+
+```bash
+# 1. Build the project
+./build.sh
+
+# 2. Start database and run migrations
+./db.sh start
+./db.sh migrate
+
+# 3. Test with database (generates and loads data)
+./test.sh --with-db
+
+# 4. Query the data
+./db.sh shell
+# In psql:
+# SELECT * FROM orders;
+# SELECT * FROM order_line_items;
+# \q
+
+# 5. When done, stop the database
+./db.sh stop
 ```
 
 ## Key Features Demonstrated

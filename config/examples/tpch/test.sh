@@ -10,6 +10,7 @@ cd "$SCRIPT_DIR"
 # Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Check if parser binary exists
@@ -20,12 +21,63 @@ if [ ! -f "$PARSER_BIN" ]; then
     exit 1
 fi
 
-# Parse command line arguments (forward all flags to parser)
+# Check for --with-db flag
+WITH_DB=false
+if [[ "$1" == "--with-db" ]]; then
+    WITH_DB=true
+    shift  # Remove --with-db from arguments
+fi
+
+# Parse remaining command line arguments (forward all flags to parser)
 PARSER_FLAGS="$@"
 DEFAULT_COUNT=3
 
 echo -e "${BLUE}=== TPC-H Parser Test ===${NC}"
 echo
+
+# If --with-db flag is set, check database and load data
+if [ "$WITH_DB" = true ]; then
+    echo -e "${YELLOW}Database mode enabled${NC}"
+    echo
+
+    # Check if database is running
+    if ! docker compose ps | grep -q "Up"; then
+        echo -e "${YELLOW}Database not running. Starting database...${NC}"
+        ./db.sh start
+        echo
+    fi
+
+    # Load environment variables (filter out comments and empty lines)
+    export $(cat .env.test | grep -v '^#' | grep -v '^$' | xargs)
+
+    # Generate test data and pipe to SQL file
+    echo -e "${BLUE}Generating SQL from test data...${NC}"
+    python3 generate_test_data.py --count 5 --seed 42 | "$PARSER_BIN" --sql-only > /tmp/tpch_test.sql
+    echo -e "${GREEN}✓ SQL generated at /tmp/tpch_test.sql${NC}"
+    echo
+
+    # Show first few lines of SQL
+    echo -e "${BLUE}Sample SQL output:${NC}"
+    head -n 20 /tmp/tpch_test.sql
+    echo "..."
+    echo
+
+    # Execute SQL against database
+    echo -e "${BLUE}Executing SQL against database...${NC}"
+    docker compose exec -T postgres psql -U tpch_user -d tpch_db < /tmp/tpch_test.sql > /dev/null
+    echo -e "${GREEN}✓ Data loaded into database${NC}"
+    echo
+
+    # Query database to verify data
+    echo -e "${BLUE}Verifying data in database:${NC}"
+    docker compose exec -T postgres psql -U tpch_user -d tpch_db -c "SELECT COUNT(*) as order_count FROM orders;"
+    docker compose exec -T postgres psql -U tpch_user -d tpch_db -c "SELECT COUNT(*) as line_item_count FROM order_line_items;"
+    echo
+
+    echo -e "${GREEN}✓ Database test complete${NC}"
+    echo -e "${BLUE}To query the database: ./db.sh shell${NC}"
+    exit 0
+fi
 
 # If no flags provided, run all test modes
 if [ -z "$PARSER_FLAGS" ]; then

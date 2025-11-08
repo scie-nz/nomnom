@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tpch_postgres
+    environment:
+      POSTGRES_USER: tpch_user
+      POSTGRES_PASSWORD: tpch_password
+      POSTGRES_DB: tpch_db
+    ports:
+      - "5433:5432"  # Use 5433 to avoid conflicts with system PostgreSQL
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tpch_user -d tpch_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

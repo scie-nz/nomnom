@@ -1,0 +1,10 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# Database
+.env
+
+# Test output
+*.jsonl
+*.sql
