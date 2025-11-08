@@ -14,6 +14,29 @@ Nomnom provides a format-agnostic framework for parsing, transforming, and deriv
 
 ## Quick Start
 
+### Building
+
+Use the provided build script which handles MySQL client library linking:
+
+```bash
+# Build library (debug mode)
+./build.sh
+
+# Build in release mode
+./build.sh --release
+
+# Build and run tests
+./build.sh --test
+
+# Clean and rebuild everything
+./build.sh --clean --all
+
+# Get help
+./build.sh --help
+```
+
+The build script automatically detects your OS and sets up the correct MySQL library paths for macOS (Homebrew) and Linux.
+
 ### Define an Entity (YAML)
 
 ```yaml
