@@ -1,0 +1,104 @@
+# Product entity - represents a product/part in the system
+# Based on TPC-H PART table
+
+entity:
+  name: Product
+  type: root  # Root entity - can be loaded from CSV or JSON
+  doc: "Represents a product that can be ordered"
+
+  fields:
+    # Product identification
+    - name: part_key
+      type: String
+      doc: "Unique part/product identifier"
+      nullable: false
+
+    - name: name
+      type: String
+      doc: "Product name"
+      nullable: false
+
+    - name: manufacturer
+      type: String
+      doc: "Manufacturer name"
+      nullable: true
+
+    - name: brand
+      type: String
+      doc: "Product brand"
+      nullable: true
+
+    - name: product_type
+      type: String
+      doc: "Type of product"
+      nullable: true
+
+    - name: size
+      type: Integer
+      doc: "Product size"
+      nullable: true
+
+    - name: container
+      type: String
+      doc: "Container type (e.g., SM CASE, LG BOX)"
+      nullable: true
+
+    - name: retail_price
+      type: Float
+      doc: "Retail price"
+      nullable: false
+
+    - name: comment
+      type: String
+      doc: "Product comments"
+      nullable: true
+
+  # Database persistence configuration
+  persistence:
+    database:
+      conformant_table: products
+      conformant_id_column: id
+      unicity_fields:
+        - part_key  # Ensure unique product keys
+
+    primary_key:
+      name: id
+      type: Integer
+      autogenerate: true
+
+    field_overrides:
+      - name: part_key
+        type: String
+        nullable: false
+
+      - name: name
+        type: String
+        nullable: false
+
+      - name: manufacturer
+        type: String
+        nullable: true
+
+      - name: brand
+        type: String
+        nullable: true
+
+      - name: product_type
+        type: String
+        nullable: true
+
+      - name: size
+        type: Integer
+        nullable: true
+
+      - name: container
+        type: String
+        nullable: true
+
+      - name: retail_price
+        type: Float
+        nullable: false
+
+      - name: comment
+        type: String
+        nullable: true

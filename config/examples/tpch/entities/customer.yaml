@@ -1,0 +1,95 @@
+# Customer entity - represents a customer/user in the system
+# Based on TPC-H CUSTOMER table
+
+entity:
+  name: Customer
+  type: root  # Root entity - can be loaded from CSV or JSON
+  doc: "Represents a customer who can place orders"
+
+  fields:
+    # Customer identification
+    - name: customer_key
+      type: String
+      doc: "Unique customer identifier"
+      nullable: false
+
+    - name: name
+      type: String
+      doc: "Customer name"
+      nullable: false
+
+    - name: address
+      type: String
+      doc: "Customer address"
+      nullable: true
+
+    - name: nation_key
+      type: String
+      doc: "Nation identifier"
+      nullable: true
+
+    - name: phone
+      type: String
+      doc: "Customer phone number"
+      nullable: true
+
+    - name: account_balance
+      type: Float
+      doc: "Customer account balance"
+      nullable: false
+
+    - name: market_segment
+      type: String
+      doc: "Market segment (e.g., AUTOMOBILE, BUILDING, FURNITURE)"
+      nullable: true
+
+    - name: comment
+      type: String
+      doc: "Customer comments"
+      nullable: true
+
+  # Database persistence configuration
+  persistence:
+    database:
+      conformant_table: customers
+      conformant_id_column: id
+      unicity_fields:
+        - customer_key  # Ensure unique customer keys
+
+    primary_key:
+      name: id
+      type: Integer
+      autogenerate: true
+
+    field_overrides:
+      - name: customer_key
+        type: String
+        nullable: false
+
+      - name: name
+        type: String
+        nullable: false
+
+      - name: address
+        type: String
+        nullable: true
+
+      - name: nation_key
+        type: String
+        nullable: true
+
+      - name: phone
+        type: String
+        nullable: true
+
+      - name: account_balance
+        type: Float
+        nullable: false
+
+      - name: market_segment
+        type: String
+        nullable: true
+
+      - name: comment
+        type: String
+        nullable: true

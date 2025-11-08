@@ -1,0 +1,35 @@
+[
+  {
+    "part_key": "P5001",
+    "name": "Premium Widget",
+    "manufacturer": "Manufacturer#1",
+    "brand": "Brand#11",
+    "product_type": "STANDARD WIDGET",
+    "size": 15,
+    "container": "SM BOX",
+    "retail_price": 45.00,
+    "comment": "High quality widget for general use"
+  },
+  {
+    "part_key": "P5002",
+    "name": "Deluxe Gadget",
+    "manufacturer": "Manufacturer#2",
+    "brand": "Brand#22",
+    "product_type": "PREMIUM GADGET",
+    "size": 25,
+    "container": "LG CASE",
+    "retail_price": 156.91,
+    "comment": "Professional grade gadget with warranty"
+  },
+  {
+    "part_key": "P5003",
+    "name": "Basic Component",
+    "manufacturer": "Manufacturer#3",
+    "brand": "Brand#33",
+    "product_type": "ECONOMY PART",
+    "size": 10,
+    "container": "SM PACK",
+    "retail_price": 12.50,
+    "comment": "Cost-effective component for bulk orders"
+  }
+]

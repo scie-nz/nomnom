@@ -1,0 +1,115 @@
+# Order entity - represents a customer order
+# Based on TPC-H ORDERS table
+
+entity:
+  name: Order
+  type: root  # Root entity - can be loaded from JSON/CSV
+  doc: "Represents a customer order containing line items"
+
+  fields:
+    # Order identification
+    - name: order_key
+      type: String
+      doc: "Unique order identifier"
+      nullable: false
+
+    - name: customer_key
+      type: String
+      doc: "Foreign key to customer"
+      nullable: false
+
+    - name: order_status
+      type: String
+      doc: "Order status (e.g., O=open, F=fulfilled, P=pending)"
+      nullable: false
+
+    - name: total_price
+      type: Float
+      doc: "Total order price"
+      nullable: false
+
+    - name: order_date
+      type: String
+      doc: "Date order was placed (YYYY-MM-DD)"
+      nullable: false
+
+    - name: order_priority
+      type: String
+      doc: "Order priority (e.g., 1-URGENT, 2-HIGH, 3-MEDIUM)"
+      nullable: true
+
+    - name: clerk
+      type: String
+      doc: "Clerk who processed the order"
+      nullable: true
+
+    - name: ship_priority
+      type: Integer
+      doc: "Shipping priority"
+      nullable: true
+
+    - name: comment
+      type: String
+      doc: "Order comments"
+      nullable: true
+
+    # Derived field - count of line items
+    - name: line_item_count
+      type: Integer
+      doc: "Number of line items in this order"
+      nullable: true
+      computed_from:
+        transform: count_children
+        sources: []
+        args:
+          child_entity: OrderLineItem
+
+  # Database persistence configuration
+  persistence:
+    database:
+      conformant_table: orders
+      conformant_id_column: id
+      unicity_fields:
+        - order_key  # Ensure unique order keys
+
+    primary_key:
+      name: id
+      type: Integer
+      autogenerate: true
+
+    field_overrides:
+      - name: order_key
+        type: String
+        nullable: false
+
+      - name: customer_key
+        type: String
+        nullable: false
+
+      - name: order_status
+        type: String
+        nullable: false
+
+      - name: total_price
+        type: Float
+        nullable: false
+
+      - name: order_date
+        type: String
+        nullable: false
+
+      - name: order_priority
+        type: String
+        nullable: true
+
+      - name: clerk
+        type: String
+        nullable: true
+
+      - name: ship_priority
+        type: Integer
+        nullable: true
+
+      - name: comment
+        type: String
+        nullable: true

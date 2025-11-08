@@ -1,0 +1,96 @@
+# Nomnom Configuration for TPC-H Style E-commerce System
+# This example demonstrates processing orders with customer and product tracking
+
+project:
+  name: tpch_example
+  version: 1.0.0
+  description: "TPC-H-style order processing example using nomnom"
+
+# Entity definitions
+entities:
+  # Path to entity YAML files
+  path: ./entities
+
+  # Entity processing order (optional - nomnom will auto-detect dependencies)
+  order:
+    - Customer
+    - Product
+    - Order
+    - OrderLineItem
+
+# Code generation configuration
+codegen:
+  # Rust code output
+  rust:
+    output_file: src/generated.rs
+    module_name: generated
+
+  # Python bindings (optional)
+  python:
+    enabled: true
+    output_file: src/generated_bindings.rs
+    module_name: tpch_example._rust
+
+  # Database models (Diesel ORM)
+  diesel:
+    enabled: true
+    models_output: src/models/mod.rs
+    operations_output: src/db/generated_operations.rs
+    schema_output: src/schema.rs
+    persistence_bindings: src/python/generated_persistence.rs
+
+# Transforms (custom data transformation functions)
+transforms:
+  # Built-in transforms that will be available
+  builtin:
+    - extract_field        # Extract field from structured data
+    - copy_from_parent     # Copy field from parent entity
+    - copy_from_context    # Copy from global context
+    - coalesce             # Return first non-null value
+    - count_children       # Count child entities
+
+  # Custom transform directory (optional)
+  custom_path: ./transforms
+
+# Database configuration (optional)
+database:
+  # Database connection for persistence
+  connection:
+    type: mysql
+    # Connection string should be provided via environment variable
+    env_var: DATABASE_URL
+
+  # Migration settings
+  migrations:
+    enabled: true
+    path: migrations/
+
+# Processing pipeline (optional)
+pipeline:
+  # Input data format
+  input:
+    format: json  # or csv, ndjson
+
+  # Output format
+  output:
+    format: ndjson
+    path: output/
+
+  # Validation rules
+  validation:
+    strict: true  # Fail on validation errors
+
+# Example usage:
+#
+# 1. Generate code:
+#    nomnom build-from-config --config config/examples/tpch/nomnom.yaml
+#
+# 2. Run migrations:
+#    diesel migration run
+#
+# 3. Process data:
+#    nomnom process --config config/examples/tpch/nomnom.yaml --input orders.json
+#
+# 4. Use from Python:
+#    from tpch_example._rust import CustomerCore, OrderCore, OrderLineItemCore
+#    customer = CustomerCore(customer_key="C001", name="John Doe", ...)

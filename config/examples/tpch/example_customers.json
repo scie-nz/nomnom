@@ -1,0 +1,32 @@
+[
+  {
+    "customer_key": "C1001",
+    "name": "Acme Corporation",
+    "address": "123 Main St, Springfield, IL 62701",
+    "nation_key": "USA",
+    "phone": "555-0100",
+    "account_balance": 5432.10,
+    "market_segment": "BUILDING",
+    "comment": "Preferred customer"
+  },
+  {
+    "customer_key": "C1002",
+    "name": "Global Supplies Inc",
+    "address": "456 Oak Ave, Portland, OR 97201",
+    "nation_key": "USA",
+    "phone": "555-0200",
+    "account_balance": 3210.50,
+    "market_segment": "AUTOMOBILE",
+    "comment": "Net 30 payment terms"
+  },
+  {
+    "customer_key": "C1003",
+    "name": "Tech Solutions Ltd",
+    "address": "789 Tech Blvd, Austin, TX 78701",
+    "nation_key": "USA",
+    "phone": "555-0300",
+    "account_balance": 9876.25,
+    "market_segment": "FURNITURE",
+    "comment": "Volume discount eligible"
+  }
+]

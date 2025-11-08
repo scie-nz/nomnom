@@ -1,0 +1,41 @@
+{
+  "order_key": "O12345",
+  "customer_key": "C1001",
+  "order_status": "F",
+  "total_price": 1234.56,
+  "order_date": "2025-01-15",
+  "order_priority": "1-URGENT",
+  "clerk": "Clerk#000001234",
+  "ship_priority": 0,
+  "comment": "Special handling required",
+  "line_items": [
+    {
+      "line_number": 1,
+      "part_key": "P5001",
+      "supplier_key": "S501",
+      "quantity": 10,
+      "extended_price": 450.00,
+      "discount": 0.05,
+      "tax": 0.08,
+      "return_flag": "N",
+      "line_status": "O",
+      "ship_date": "2025-01-20",
+      "commit_date": "2025-01-18",
+      "receipt_date": null
+    },
+    {
+      "line_number": 2,
+      "part_key": "P5002",
+      "supplier_key": "S502",
+      "quantity": 5,
+      "extended_price": 784.56,
+      "discount": 0.03,
+      "tax": 0.08,
+      "return_flag": "N",
+      "line_status": "O",
+      "ship_date": "2025-01-22",
+      "commit_date": "2025-01-18",
+      "receipt_date": null
+    }
+  ]
+}
