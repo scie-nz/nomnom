@@ -68,6 +68,7 @@ pub fn generate_operations(
     writeln!(output, "//! Auto-generated GetOrCreate implementations\n")?;
     writeln!(output, "use diesel::prelude::*;")?;
     writeln!(output, "use diesel::result::Error as DieselError;")?;
+    writeln!(output, "use diesel::pg::PgConnection;")?;
     writeln!(output, "use crate::models::*;")?;
     writeln!(output, "use crate::schema::*;")?;
     writeln!(output, "use crate::db::operations::GetOrCreate;\n")?;
@@ -88,7 +89,7 @@ pub fn generate_operations(
 
                         writeln!(output, "impl GetOrCreate for {} {{", entity_name)?;
                         writeln!(output, "    fn get_or_create(")?;
-                        writeln!(output, "        conn: &mut MysqlConnection,")?;
+                        writeln!(output, "        conn: &mut PgConnection,")?;
                         writeln!(output, "        instance: &Self,")?;
                         writeln!(output, "    ) -> Result<Self, DieselError> {{")?;
                         writeln!(output, "        use crate::schema::{}::dsl::*;", table_name)?;
