@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build script for nomnom library
-# Handles MySQL client library linking for macOS and Linux
+# Handles PostgreSQL library linking for macOS and Linux
 
 set -e  # Exit on error
 
@@ -16,46 +16,54 @@ echo -e "${BLUE}Building nomnom library${NC}"
 echo -e "${BLUE}================================${NC}"
 echo ""
 
-# Detect OS and set MySQL client library path
+# Detect OS and set PostgreSQL library path
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS
-    if [ -d "/opt/homebrew/opt/mysql-client/lib" ]; then
+    if [ -d "/opt/homebrew/opt/postgresql/lib" ]; then
         # Apple Silicon (M1/M2)
-        MYSQL_LIB_PATH="/opt/homebrew/opt/mysql-client/lib"
+        PG_LIB_PATH="/opt/homebrew/opt/postgresql/lib"
         echo -e "${GREEN}✓${NC} Detected macOS (Apple Silicon)"
-    elif [ -d "/usr/local/opt/mysql-client/lib" ]; then
+    elif [ -d "/usr/local/opt/postgresql/lib" ]; then
         # Intel Mac
-        MYSQL_LIB_PATH="/usr/local/opt/mysql-client/lib"
+        PG_LIB_PATH="/usr/local/opt/postgresql/lib"
         echo -e "${GREEN}✓${NC} Detected macOS (Intel)"
+    elif [ -d "/opt/homebrew/opt/libpq/lib" ]; then
+        # libpq only (Apple Silicon)
+        PG_LIB_PATH="/opt/homebrew/opt/libpq/lib"
+        echo -e "${GREEN}✓${NC} Detected macOS (Apple Silicon - libpq)"
+    elif [ -d "/usr/local/opt/libpq/lib" ]; then
+        # libpq only (Intel)
+        PG_LIB_PATH="/usr/local/opt/libpq/lib"
+        echo -e "${GREEN}✓${NC} Detected macOS (Intel - libpq)"
     else
-        echo -e "${YELLOW}⚠${NC}  MySQL client library not found"
-        echo -e "${YELLOW}⚠${NC}  Install with: brew install mysql-client"
-        MYSQL_LIB_PATH=""
+        echo -e "${YELLOW}⚠${NC}  PostgreSQL library not found"
+        echo -e "${YELLOW}⚠${NC}  Install with: brew install postgresql"
+        PG_LIB_PATH=""
     fi
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # Linux
     if [ -d "/usr/lib/x86_64-linux-gnu" ]; then
-        MYSQL_LIB_PATH="/usr/lib/x86_64-linux-gnu"
+        PG_LIB_PATH="/usr/lib/x86_64-linux-gnu"
         echo -e "${GREEN}✓${NC} Detected Linux (x86_64)"
     elif [ -d "/usr/lib64" ]; then
-        MYSQL_LIB_PATH="/usr/lib64"
+        PG_LIB_PATH="/usr/lib64"
         echo -e "${GREEN}✓${NC} Detected Linux (lib64)"
     else
-        echo -e "${YELLOW}⚠${NC}  MySQL client library not found"
-        echo -e "${YELLOW}⚠${NC}  Install with: sudo apt-get install libmysqlclient-dev"
-        MYSQL_LIB_PATH=""
+        echo -e "${YELLOW}⚠${NC}  PostgreSQL library not found"
+        echo -e "${YELLOW}⚠${NC}  Install with: sudo apt-get install libpq-dev"
+        PG_LIB_PATH=""
     fi
 else
     echo -e "${YELLOW}⚠${NC}  Unknown OS: $OSTYPE"
-    MYSQL_LIB_PATH=""
+    PG_LIB_PATH=""
 fi
 
-# Set RUSTFLAGS if MySQL library path was found
-if [ -n "$MYSQL_LIB_PATH" ]; then
-    export RUSTFLAGS="-L $MYSQL_LIB_PATH"
-    echo -e "${GREEN}✓${NC} Set RUSTFLAGS=\"-L $MYSQL_LIB_PATH\""
+# Set RUSTFLAGS if PostgreSQL library path was found
+if [ -n "$PG_LIB_PATH" ]; then
+    export RUSTFLAGS="-L $PG_LIB_PATH"
+    echo -e "${GREEN}✓${NC} Set RUSTFLAGS=\"-L $PG_LIB_PATH\""
 else
-    echo -e "${YELLOW}⚠${NC}  Building without MySQL support"
+    echo -e "${YELLOW}⚠${NC}  Building without PostgreSQL support"
 fi
 
 echo ""
