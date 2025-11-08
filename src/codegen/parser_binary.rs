@@ -115,13 +115,41 @@ fn compute_extraction_order(
         }
     }
 
-    // Check for cycles
+    // Check for cycles or unreachable entities
     if result.len() != entities.len() {
-        return Err(format!(
-            "Circular dependency detected in entity graph. Extracted {} of {} entities",
-            result.len(),
-            entities.len()
-        ));
+        // Find which entities were not processed
+        let processed_names: std::collections::HashSet<_> = result.iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        let unprocessed: Vec<_> = entities.iter()
+            .filter(|e| !processed_names.contains(e.name.as_str()))
+            .map(|e| &e.name)
+            .collect();
+
+        // Check if unprocessed entities have dependencies
+        let mut has_dependencies = false;
+        for entity in entities {
+            if !processed_names.contains(entity.name.as_str()) {
+                let parents = entity.get_parents();
+                if !parents.is_empty() {
+                    has_dependencies = true;
+                    break;
+                }
+            }
+        }
+
+        if has_dependencies {
+            return Err(format!(
+                "Circular dependency detected in entity graph.\nUnprocessed entities: {:?}\nThese entities form a dependency cycle.",
+                unprocessed
+            ));
+        } else {
+            return Err(format!(
+                "Unreachable entities detected in graph.\nUnprocessed entities: {:?}\nThese entities are not connected to the root entity '{}' and cannot be extracted.\nNote: Parser binary only supports single-root entity graphs.",
+                unprocessed,
+                root_entity.name
+            ));
+        }
     }
 
     Ok(result)
