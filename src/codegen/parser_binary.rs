@@ -257,12 +257,12 @@ fn generate_parse_results_struct(extraction_order: &[EntityDef]) -> String {
         let field_name = to_snake_case(&entity.name);
         let type_name = format!("{}Core", entity.name);
 
-        let field_type = if let Some(repetition) = &entity.repetition {
-            if repetition == "repeated" {
-                format!("Vec<{}>", type_name)
-            } else {
-                type_name
-            }
+        // Check if entity is repeated (either via repetition field or repeated_for)
+        let is_repeated = entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false)
+            || entity.repeated_for.is_some();
+
+        let field_type = if is_repeated {
+            format!("Vec<{}>", type_name)
         } else {
             type_name
         };
@@ -411,7 +411,8 @@ fn generate_extraction_function(
         }
 
         // Determine extraction method based on repetition and parents
-        let is_repeated = entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false);
+        let is_repeated = entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false)
+            || entity.repeated_for.is_some();
         let has_single_parent = parents.len() == 1;
 
         if is_repeated && has_single_parent {
@@ -616,7 +617,8 @@ fn generate_json_output_function(extraction_order: &[EntityDef]) -> String {
 
         let var_name = to_snake_case(&entity.name);
         let entity_name = &entity.name;
-        let is_repeated = entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false);
+        let is_repeated = entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false)
+            || entity.repeated_for.is_some();
 
         if is_repeated {
             // Repeated entity: output with index
@@ -684,10 +686,17 @@ fn generate_sql_output_function(permanent_entities: &[&EntityDef]) -> String {
     code.push_str("    println!(\"-- ========================================\");\n");
     code.push_str("    println!();\n");
 
+    // Filter out reference entities - they're not in ParseResults
     for entity in permanent_entities {
+        // Skip reference entities
+        if entity.source_type.to_lowercase() == "reference" {
+            continue;
+        }
+
         let function_name = format!("output_{}_sql", to_snake_case(&entity.name));
         let var_name = to_snake_case(&entity.name);
-        let is_repeated = entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false);
+        let is_repeated = entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false)
+            || entity.repeated_for.is_some();
 
         if is_repeated {
             code.push_str(&format!(
@@ -710,6 +719,27 @@ fn generate_sql_output_function(permanent_entities: &[&EntityDef]) -> String {
     }
 
     code
+}
+
+/// Get SQL helper function name for a field type
+fn get_sql_opt_function(field_type: &str, nullable: bool) -> &'static str {
+    match (field_type, nullable) {
+        ("String", false) => "sql_opt_string",
+        ("String", true) => "sql_opt_string_option",
+        ("List[Object]" | "List[Json]", _) => "sql_opt_json_array",
+        (_, true) => "sql_opt_option",
+        (_, false) => "sql_opt",
+    }
+}
+
+/// Get SQL comparison function name for a field type
+fn get_sql_cmp_function(field_type: &str, nullable: bool) -> &'static str {
+    match (field_type, nullable) {
+        ("String", false) => "sql_cmp_string",
+        ("String", true) => "sql_cmp_string_option",
+        (_, true) => "sql_cmp_option",
+        (_, false) => "sql_cmp",
+    }
 }
 
 /// Generate SQL output function for a single entity
@@ -751,11 +781,18 @@ fn generate_entity_sql_function(entity: &EntityDef) -> String {
     code.push_str(&format!("    println!(\"SELECT * FROM {}\");\n", table_name));
     code.push_str("    println!(\"WHERE\");\n");
 
-    for (i, field) in unicity_fields.iter().enumerate() {
+    for (i, field_name) in unicity_fields.iter().enumerate() {
         let separator = if i == 0 { "      " } else { "  AND " };
+        // Find field definition to get type
+        let field = entity.fields.iter().find(|f| &f.name == field_name);
+        let cmp_fn = if let Some(f) = field {
+            get_sql_cmp_function(&f.field_type, f.nullable)
+        } else {
+            "sql_cmp_string_option" // fallback
+        };
         code.push_str(&format!(
-            "    println!(\"{}{} {{}}\", sql_cmp_opt(&entity.{}));\n",
-            separator, field, field
+            "    println!(\"{}{} {{}}\", {}(&entity.{}));\n",
+            separator, field_name, cmp_fn, field_name
         ));
     }
 
@@ -766,29 +803,30 @@ fn generate_entity_sql_function(entity: &EntityDef) -> String {
     code.push_str("    println!(\"-- If not found:\");\n");
 
     // Collect all field names (excluding auto-generated PK if configured)
-    let mut insert_fields: Vec<String> = Vec::new();
+    let mut insert_fields: Vec<(&String, &String, bool)> = Vec::new();
     for field in &entity.fields {
         // Skip auto-generated conformant ID
         if db_config.autogenerate_conformant_id
             && field.name == db_config.conformant_id_column {
             continue;
         }
-        insert_fields.push(field.name.clone());
+        insert_fields.push((&field.name, &field.field_type, field.nullable));
     }
 
     code.push_str(&format!(
         "    println!(\"INSERT INTO {} ({})\");\n",
         table_name,
-        insert_fields.join(", ")
+        insert_fields.iter().map(|(name, _, _)| name.as_str()).collect::<Vec<_>>().join(", ")
     ));
     code.push_str("    println!(\"VALUES\");\n");
     code.push_str("    print!(\"  (\");\n");
 
-    for (i, field) in insert_fields.iter().enumerate() {
+    for (i, (field_name, field_type, nullable)) in insert_fields.iter().enumerate() {
         if i > 0 {
             code.push_str("    print!(\", \");\n");
         }
-        code.push_str(&format!("    print!(\"{{}}\", sql_opt(&entity.{}));\n", field));
+        let opt_fn = get_sql_opt_function(field_type, *nullable);
+        code.push_str(&format!("    print!(\"{{}}\", {}(&entity.{}));\n", opt_fn, field_name));
     }
 
     code.push_str("    println!(\")\");\n");
@@ -802,18 +840,62 @@ fn generate_entity_sql_function(entity: &EntityDef) -> String {
 
 /// Generate SQL helper functions
 fn generate_sql_helpers() -> String {
-    r#"/// Format Option<String> as SQL value ('value' or NULL)
-fn sql_opt(opt: &Option<String>) -> String {
+    r#"/// Format any value as SQL literal
+fn sql_opt<T: std::fmt::Display>(value: &T) -> String {
+    format!("{}", value)
+}
+
+/// Format Option<T> as SQL value
+fn sql_opt_option<T: std::fmt::Display>(opt: &Option<T>) -> String {
+    match opt {
+        Some(v) => format!("{}", v),
+        None => "NULL".to_string(),
+    }
+}
+
+/// Format String as SQL string literal
+fn sql_opt_string(s: &String) -> String {
+    format!("'{}'", sql_escape(s))
+}
+
+/// Format Option<String> as SQL string literal
+fn sql_opt_string_option(opt: &Option<String>) -> String {
     match opt {
         Some(s) => format!("'{}'", sql_escape(s)),
         None => "NULL".to_string(),
     }
 }
 
+/// Format Vec<serde_json::Value> as SQL (JSON array)
+fn sql_opt_json_array(arr: &Vec<serde_json::Value>) -> String {
+    match serde_json::to_string(arr) {
+        Ok(json) => format!("'{}'", sql_escape(&json)),
+        Err(_) => "NULL".to_string(),
+    }
+}
+
+/// Format String as SQL comparison (field = 'value')
+fn sql_cmp_string(s: &String) -> String {
+    format!("= '{}'", sql_escape(s))
+}
+
 /// Format Option<String> as SQL comparison (field = 'value' OR field IS NULL)
-fn sql_cmp_opt(opt: &Option<String>) -> String {
+fn sql_cmp_string_option(opt: &Option<String>) -> String {
     match opt {
         Some(s) => format!("= '{}'", sql_escape(s)),
+        None => "IS NULL".to_string(),
+    }
+}
+
+/// Format numeric value as SQL comparison
+fn sql_cmp<T: std::fmt::Display>(value: &T) -> String {
+    format!("= {}", value)
+}
+
+/// Format Option<T> as SQL comparison
+fn sql_cmp_option<T: std::fmt::Display>(opt: &Option<T>) -> String {
+    match opt {
+        Some(v) => format!("= {}", v),
         None => "IS NULL".to_string(),
     }
 }

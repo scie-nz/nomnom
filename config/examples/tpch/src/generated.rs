@@ -1,7 +1,6 @@
 // Auto-generated from YAML entity specifications
 
-use crate::entity::{Hl7Entity, ParsingContext, EntityError, FieldValue, IntoOptionString};
-use hl7utils::{Segment, FieldPath, safe_extract};
+use nomnom::{Entity, FieldValue, EntityError, Context, IntoOptionString};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use pyo3::prelude::*;
@@ -9,10 +8,97 @@ use sha1::{Sha1, Digest};
 use regex::Regex;
 
 
+// ============================================================================
+// Auto-generated Transform Functions
+// Generated from nomnom.yaml transforms section
+// ============================================================================
+
+/// Extract an optional float field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<Option<f64>, String>
+pub fn json_get_optional_float(obj: &serde_json::Value, field: &str) -> Result<Option<f64>, String> {
+    Ok(obj.get(field)
+        .and_then(|v| v.as_f64()))
+}
+
+/// Extract an optional string field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<Option<String>, String>
+pub fn json_get_optional_string(obj: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
+    Ok(obj.get(field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
+/// Extract an integer field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<i64, String>
+pub fn json_get_int(obj: &serde_json::Value, field: &str) -> Result<i64, String> {
+    obj.get(field)
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| format!("Missing or invalid integer field '{}'", field))
+}
+
+/// Extract a string field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<String, String>
+pub fn json_get_string(obj: &serde_json::Value, field: &str) -> Result<String, String> {
+    obj.get(field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("Missing or invalid string field '{}'", field))
+}
+
+/// Extract a float field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<f64, String>
+pub fn json_get_float(obj: &serde_json::Value, field: &str) -> Result<f64, String> {
+    obj.get(field)
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| format!("Missing or invalid float field '{}'", field))
+}
+
+// ============================================================================
+
 /// Represents a single line item within an order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderLineItemCore {
-    /// Order key (copied from parent)
+    /// Order key (foreign key to orders table)
     pub order_key: String,
     /// Line item sequence number within order
     pub line_number: i64,
@@ -56,45 +142,44 @@ impl OrderLineItemCore {
         let mut instances = Vec::new();
 
         // Iterate over parent.line_items
-        for line_item_data in &order.line_items {
+        for item in &order.line_items {
             // Extract field: order_key
-            let order_key = copy_from_parent(&parent.order_key)
-                .map_err(|e| format!("Failed to extract 'order_key': {}", e))?;
+            let order_key = order.order_key.clone();
             // Extract field: line_number
-            let line_number = extract_field(&parent.line_item_data, "line_number")
+            let line_number = json_get_int(item, "line_number")
                 .map_err(|e| format!("Failed to extract 'line_number': {}", e))?;
             // Extract field: part_key
-            let part_key = extract_field(&parent.line_item_data, "part_key")
+            let part_key = json_get_string(item, "part_key")
                 .map_err(|e| format!("Failed to extract 'part_key': {}", e))?;
             // Extract field: supplier_key
-            let supplier_key = extract_field(&parent.line_item_data, "supplier_key")
+            let supplier_key = json_get_optional_string(item, "supplier_key")
                 .map_err(|e| format!("Failed to extract 'supplier_key': {}", e))?;
             // Extract field: quantity
-            let quantity = extract_field(&parent.line_item_data, "quantity")
+            let quantity = json_get_int(item, "quantity")
                 .map_err(|e| format!("Failed to extract 'quantity': {}", e))?;
             // Extract field: extended_price
-            let extended_price = extract_field(&parent.line_item_data, "extended_price")
+            let extended_price = json_get_float(item, "extended_price")
                 .map_err(|e| format!("Failed to extract 'extended_price': {}", e))?;
             // Extract field: discount
-            let discount = extract_field(&parent.line_item_data, "discount")
+            let discount = json_get_optional_float(item, "discount")
                 .map_err(|e| format!("Failed to extract 'discount': {}", e))?;
             // Extract field: tax
-            let tax = extract_field(&parent.line_item_data, "tax")
+            let tax = json_get_optional_float(item, "tax")
                 .map_err(|e| format!("Failed to extract 'tax': {}", e))?;
             // Extract field: return_flag
-            let return_flag = extract_field(&parent.line_item_data, "return_flag")
+            let return_flag = json_get_optional_string(item, "return_flag")
                 .map_err(|e| format!("Failed to extract 'return_flag': {}", e))?;
             // Extract field: line_status
-            let line_status = extract_field(&parent.line_item_data, "line_status")
+            let line_status = json_get_optional_string(item, "line_status")
                 .map_err(|e| format!("Failed to extract 'line_status': {}", e))?;
             // Extract field: ship_date
-            let ship_date = extract_field(&parent.line_item_data, "ship_date")
+            let ship_date = json_get_optional_string(item, "ship_date")
                 .map_err(|e| format!("Failed to extract 'ship_date': {}", e))?;
             // Extract field: commit_date
-            let commit_date = extract_field(&parent.line_item_data, "commit_date")
+            let commit_date = json_get_optional_string(item, "commit_date")
                 .map_err(|e| format!("Failed to extract 'commit_date': {}", e))?;
             // Extract field: receipt_date
-            let receipt_date = extract_field(&parent.line_item_data, "receipt_date")
+            let receipt_date = json_get_optional_string(item, "receipt_date")
                 .map_err(|e| format!("Failed to extract 'receipt_date': {}", e))?;
 
             instances.push(Self {
@@ -153,7 +238,7 @@ impl OrderLineItemCore {
     }
 }
 
-/// Represents a customer order containing line items
+/// Represents a customer order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderCore {
     /// Unique order identifier
@@ -174,8 +259,8 @@ pub struct OrderCore {
     pub ship_priority: Option<i64>,
     /// Order comments
     pub comment: Option<String>,
-    /// Number of line items in this order
-    pub line_item_count: Option<i64>,
+    /// Array of line items in this order (each item is a dict with line item fields)
+    pub line_items: Vec<serde_json::Value>,
 }
 
 impl OrderCore {
@@ -187,22 +272,9 @@ impl OrderCore {
     pub fn from_string(
         raw_input: &str,
     ) -> Result<Self, String> {
-        // Extract field: line_item_count
-        let line_item_count = count_children("OrderLineItem")
-            .map_err(|e| format!("Failed to extract 'line_item_count': {}", e))?;
-
-        Ok(Self {
-            order_key,
-            customer_key,
-            order_status,
-            total_price,
-            order_date,
-            order_priority,
-            clerk,
-            ship_priority,
-            comment,
-            line_item_count,
-        })
+        // Deserialize from JSON
+        serde_json::from_str(raw_input)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))
     }
 
     /// Convert entity to dictionary/map
@@ -217,7 +289,7 @@ impl OrderCore {
         map.insert("clerk".to_string(), serde_json::to_value(&self.clerk).unwrap_or(serde_json::Value::Null));
         map.insert("ship_priority".to_string(), serde_json::to_value(&self.ship_priority).unwrap_or(serde_json::Value::Null));
         map.insert("comment".to_string(), serde_json::to_value(&self.comment).unwrap_or(serde_json::Value::Null));
-        map.insert("line_item_count".to_string(), serde_json::to_value(&self.line_item_count).unwrap_or(serde_json::Value::Null));
+        map.insert("line_items".to_string(), serde_json::to_value(&self.line_items).unwrap_or(serde_json::Value::Null));
         map
     }
 

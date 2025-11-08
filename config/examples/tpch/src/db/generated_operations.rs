@@ -2,6 +2,7 @@
 
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
+use diesel::pg::PgConnection;
 use crate::models::*;
 use crate::schema::*;
 use crate::db::operations::GetOrCreate;
@@ -12,7 +13,7 @@ use crate::db::operations::GetOrCreate;
 
 impl GetOrCreate for OrderLineItem {
     fn get_or_create(
-        conn: &mut MysqlConnection,
+        conn: &mut PgConnection,
         instance: &Self,
     ) -> Result<Self, DieselError> {
         use crate::schema::order_line_items::dsl::*;
@@ -29,7 +30,21 @@ impl GetOrCreate for OrderLineItem {
             Some(found) => Ok(found),
             None => {
                 diesel::insert_into(order_line_items)
-                    .values(instance)
+                    .values((
+                        order_key.eq(&instance.order_key),
+                        line_number.eq(instance.line_number),
+                        part_key.eq(&instance.part_key),
+                        supplier_key.eq(&instance.supplier_key),
+                        quantity.eq(instance.quantity),
+                        extended_price.eq(&instance.extended_price),
+                        discount.eq(&instance.discount),
+                        tax.eq(&instance.tax),
+                        return_flag.eq(&instance.return_flag),
+                        line_status.eq(&instance.line_status),
+                        ship_date.eq(&instance.ship_date),
+                        commit_date.eq(&instance.commit_date),
+                        receipt_date.eq(&instance.receipt_date),
+                    ))
                     .execute(conn)?;
 
                 // Query back to get auto-generated id
@@ -51,7 +66,7 @@ impl GetOrCreate for OrderLineItem {
 
 impl GetOrCreate for Order {
     fn get_or_create(
-        conn: &mut MysqlConnection,
+        conn: &mut PgConnection,
         instance: &Self,
     ) -> Result<Self, DieselError> {
         use crate::schema::orders::dsl::*;
@@ -67,7 +82,17 @@ impl GetOrCreate for Order {
             Some(found) => Ok(found),
             None => {
                 diesel::insert_into(orders)
-                    .values(instance)
+                    .values((
+                        order_key.eq(&instance.order_key),
+                        customer_key.eq(&instance.customer_key),
+                        order_status.eq(&instance.order_status),
+                        total_price.eq(&instance.total_price),
+                        order_date.eq(&instance.order_date),
+                        order_priority.eq(&instance.order_priority),
+                        clerk.eq(&instance.clerk),
+                        ship_priority.eq(instance.ship_priority),
+                        comment.eq(&instance.comment),
+                    ))
                     .execute(conn)?;
 
                 // Query back to get auto-generated id
@@ -89,7 +114,7 @@ impl GetOrCreate for Order {
 
 impl GetOrCreate for Customer {
     fn get_or_create(
-        conn: &mut MysqlConnection,
+        conn: &mut PgConnection,
         instance: &Self,
     ) -> Result<Self, DieselError> {
         use crate::schema::customers::dsl::*;
@@ -105,7 +130,16 @@ impl GetOrCreate for Customer {
             Some(found) => Ok(found),
             None => {
                 diesel::insert_into(customers)
-                    .values(instance)
+                    .values((
+                        customer_key.eq(&instance.customer_key),
+                        name.eq(&instance.name),
+                        address.eq(&instance.address),
+                        nation_key.eq(&instance.nation_key),
+                        phone.eq(&instance.phone),
+                        account_balance.eq(&instance.account_balance),
+                        market_segment.eq(&instance.market_segment),
+                        comment.eq(&instance.comment),
+                    ))
                     .execute(conn)?;
 
                 // Query back to get auto-generated id
@@ -127,7 +161,7 @@ impl GetOrCreate for Customer {
 
 impl GetOrCreate for Product {
     fn get_or_create(
-        conn: &mut MysqlConnection,
+        conn: &mut PgConnection,
         instance: &Self,
     ) -> Result<Self, DieselError> {
         use crate::schema::products::dsl::*;
@@ -143,7 +177,17 @@ impl GetOrCreate for Product {
             Some(found) => Ok(found),
             None => {
                 diesel::insert_into(products)
-                    .values(instance)
+                    .values((
+                        part_key.eq(&instance.part_key),
+                        name.eq(&instance.name),
+                        manufacturer.eq(&instance.manufacturer),
+                        brand.eq(&instance.brand),
+                        product_type.eq(&instance.product_type),
+                        size.eq(instance.size),
+                        container.eq(&instance.container),
+                        retail_price.eq(&instance.retail_price),
+                        comment.eq(&instance.comment),
+                    ))
                     .execute(conn)?;
 
                 // Query back to get auto-generated id

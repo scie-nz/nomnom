@@ -13,13 +13,82 @@ dependencies:
     path: ../../..
     features: ["python-bridge"]
 
+# Transform functions for field extraction from JSON objects
+transforms:
+  rust:
+    json_get_string:
+      doc: "Extract a string field from a JSON object"
+      args:
+        - name: obj
+          type: "&serde_json::Value"
+        - name: field
+          type: "&str"
+      return_type: "Result<String, String>"
+      code: |
+        obj.get(field)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| format!("Missing or invalid string field '{}'", field))
+
+    json_get_int:
+      doc: "Extract an integer field from a JSON object"
+      args:
+        - name: obj
+          type: "&serde_json::Value"
+        - name: field
+          type: "&str"
+      return_type: "Result<i64, String>"
+      code: |
+        obj.get(field)
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| format!("Missing or invalid integer field '{}'", field))
+
+    json_get_float:
+      doc: "Extract a float field from a JSON object"
+      args:
+        - name: obj
+          type: "&serde_json::Value"
+        - name: field
+          type: "&str"
+      return_type: "Result<f64, String>"
+      code: |
+        obj.get(field)
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| format!("Missing or invalid float field '{}'", field))
+
+    json_get_optional_string:
+      doc: "Extract an optional string field from a JSON object"
+      args:
+        - name: obj
+          type: "&serde_json::Value"
+        - name: field
+          type: "&str"
+      return_type: "Result<Option<String>, String>"
+      code: |
+        Ok(obj.get(field)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()))
+
+    json_get_optional_float:
+      doc: "Extract an optional float field from a JSON object"
+      args:
+        - name: obj
+          type: "&serde_json::Value"
+        - name: field
+          type: "&str"
+      return_type: "Result<Option<f64>, String>"
+      code: |
+        Ok(obj.get(field)
+            .and_then(|v| v.as_f64()))
+
 # Build paths configuration
 paths:
-  source_root: config/examples/tpch
-  config_dir: config/examples/tpch/entities
+  source_root: .
+  config_dir: entities
   outputs:
     rust_entities: src/generated.rs
     pyo3_bindings: src/generated_bindings.rs
+    lib_rs: src/lib.rs
     diesel_schema: src/schema.rs
     diesel_models: src/models/mod.rs
     diesel_operations: src/db/generated_operations.rs

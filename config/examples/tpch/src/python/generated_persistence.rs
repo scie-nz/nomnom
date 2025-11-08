@@ -1,6 +1,7 @@
 //! Auto-generated PyO3 get_or_create methods
 
 use pyo3::prelude::*;
+use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 use crate::db::operations::GetOrCreate;
 use crate::models::*;
 use crate::python::PyDatabase;
@@ -13,27 +14,38 @@ pub fn orderlineitem_get_or_create(
     core: &PyAny,
     database: &PyDatabase,
 ) -> PyResult<PyObject> {
-    // Convert Core to Diesel model
+    // Convert Core to Diesel OrderLineItem model
     let diesel_model = OrderLineItem {
-        id: 0,  // Auto-generated, placeholder value
+        id: 0,  // Placeholder for auto-generated ID
         order_key: core.getattr("order_key")?.extract::<Option<String>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "order_key is required"))?,
-        line_number: core.getattr("line_number")?.extract::<Option<String>>()?
+        line_number: core.getattr("line_number")?.extract::<Option<i32>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "line_number is required"))?,
         part_key: core.getattr("part_key")?.extract::<Option<String>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "part_key is required"))?,
         supplier_key: core.getattr("supplier_key")?.extract()?,
-        quantity: core.getattr("quantity")?.extract::<Option<String>>()?
+        quantity: core.getattr("quantity")?.extract::<Option<i32>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "quantity is required"))?,
-        extended_price: core.getattr("extended_price")?.extract::<Option<String>>()?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "extended_price is required"))?,
-        discount: core.getattr("discount")?.extract()?,
-        tax: core.getattr("tax")?.extract()?,
+        extended_price: {
+            let value = core.getattr("extended_price")?.extract::<Option<f64>>()?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "extended_price is required"))?;
+            BigDecimal::from_f64(value)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid float value for extended_price"))?
+        },
+        discount: {
+            let value: Option<f64> = core.getattr("discount")?.extract()?;
+            value.and_then(BigDecimal::from_f64)
+        },
+        tax: {
+            let value: Option<f64> = core.getattr("tax")?.extract()?;
+            value.and_then(BigDecimal::from_f64)
+        },
         return_flag: core.getattr("return_flag")?.extract()?,
         line_status: core.getattr("line_status")?.extract()?,
         ship_date: core.getattr("ship_date")?.extract()?,
@@ -56,9 +68,9 @@ pub fn orderlineitem_get_or_create(
     kwargs.set_item("part_key", Some(result.part_key))?;
     kwargs.set_item("supplier_key", result.supplier_key)?;
     kwargs.set_item("quantity", Some(result.quantity))?;
-    kwargs.set_item("extended_price", Some(result.extended_price))?;
-    kwargs.set_item("discount", result.discount)?;
-    kwargs.set_item("tax", result.tax)?;
+    kwargs.set_item("extended_price", Some(result.extended_price.to_f64()))?;
+    kwargs.set_item("discount", result.discount.and_then(|bd| bd.to_f64()))?;
+    kwargs.set_item("tax", result.tax.and_then(|bd| bd.to_f64()))?;
     kwargs.set_item("return_flag", result.return_flag)?;
     kwargs.set_item("line_status", result.line_status)?;
     kwargs.set_item("ship_date", result.ship_date)?;
@@ -75,9 +87,9 @@ pub fn order_get_or_create(
     core: &PyAny,
     database: &PyDatabase,
 ) -> PyResult<PyObject> {
-    // Convert Core to Diesel model
+    // Convert Core to Diesel Order model
     let diesel_model = Order {
-        id: 0,  // Auto-generated, placeholder value
+        id: 0,  // Placeholder for auto-generated ID
         order_key: core.getattr("order_key")?.extract::<Option<String>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "order_key is required"))?,
@@ -87,9 +99,14 @@ pub fn order_get_or_create(
         order_status: core.getattr("order_status")?.extract::<Option<String>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "order_status is required"))?,
-        total_price: core.getattr("total_price")?.extract::<Option<String>>()?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "total_price is required"))?,
+        total_price: {
+            let value = core.getattr("total_price")?.extract::<Option<f64>>()?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "total_price is required"))?;
+            BigDecimal::from_f64(value)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid float value for total_price"))?
+        },
         order_date: core.getattr("order_date")?.extract::<Option<String>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "order_date is required"))?,
@@ -112,7 +129,7 @@ pub fn order_get_or_create(
     kwargs.set_item("order_key", Some(result.order_key))?;
     kwargs.set_item("customer_key", Some(result.customer_key))?;
     kwargs.set_item("order_status", Some(result.order_status))?;
-    kwargs.set_item("total_price", Some(result.total_price))?;
+    kwargs.set_item("total_price", Some(result.total_price.to_f64()))?;
     kwargs.set_item("order_date", Some(result.order_date))?;
     kwargs.set_item("order_priority", result.order_priority)?;
     kwargs.set_item("clerk", result.clerk)?;
@@ -129,9 +146,9 @@ pub fn customer_get_or_create(
     core: &PyAny,
     database: &PyDatabase,
 ) -> PyResult<PyObject> {
-    // Convert Core to Diesel model
+    // Convert Core to Diesel Customer model
     let diesel_model = Customer {
-        id: 0,  // Auto-generated, placeholder value
+        id: 0,  // Placeholder for auto-generated ID
         customer_key: core.getattr("customer_key")?.extract::<Option<String>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "customer_key is required"))?,
@@ -141,9 +158,14 @@ pub fn customer_get_or_create(
         address: core.getattr("address")?.extract()?,
         nation_key: core.getattr("nation_key")?.extract()?,
         phone: core.getattr("phone")?.extract()?,
-        account_balance: core.getattr("account_balance")?.extract::<Option<String>>()?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "account_balance is required"))?,
+        account_balance: {
+            let value = core.getattr("account_balance")?.extract::<Option<f64>>()?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "account_balance is required"))?;
+            BigDecimal::from_f64(value)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid float value for account_balance"))?
+        },
         market_segment: core.getattr("market_segment")?.extract()?,
         comment: core.getattr("comment")?.extract()?,
     };
@@ -163,7 +185,7 @@ pub fn customer_get_or_create(
     kwargs.set_item("address", result.address)?;
     kwargs.set_item("nation_key", result.nation_key)?;
     kwargs.set_item("phone", result.phone)?;
-    kwargs.set_item("account_balance", Some(result.account_balance))?;
+    kwargs.set_item("account_balance", Some(result.account_balance.to_f64()))?;
     kwargs.set_item("market_segment", result.market_segment)?;
     kwargs.set_item("comment", result.comment)?;
     let instance = core_class.call((), Some(kwargs))?;
@@ -177,9 +199,9 @@ pub fn product_get_or_create(
     core: &PyAny,
     database: &PyDatabase,
 ) -> PyResult<PyObject> {
-    // Convert Core to Diesel model
+    // Convert Core to Diesel Product model
     let diesel_model = Product {
-        id: 0,  // Auto-generated, placeholder value
+        id: 0,  // Placeholder for auto-generated ID
         part_key: core.getattr("part_key")?.extract::<Option<String>>()?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "part_key is required"))?,
@@ -191,9 +213,14 @@ pub fn product_get_or_create(
         product_type: core.getattr("product_type")?.extract()?,
         size: core.getattr("size")?.extract()?,
         container: core.getattr("container")?.extract()?,
-        retail_price: core.getattr("retail_price")?.extract::<Option<String>>()?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "retail_price is required"))?,
+        retail_price: {
+            let value = core.getattr("retail_price")?.extract::<Option<f64>>()?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "retail_price is required"))?;
+            BigDecimal::from_f64(value)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Invalid float value for retail_price"))?
+        },
         comment: core.getattr("comment")?.extract()?,
     };
 
@@ -214,7 +241,7 @@ pub fn product_get_or_create(
     kwargs.set_item("product_type", result.product_type)?;
     kwargs.set_item("size", result.size)?;
     kwargs.set_item("container", result.container)?;
-    kwargs.set_item("retail_price", Some(result.retail_price))?;
+    kwargs.set_item("retail_price", Some(result.retail_price.to_f64()))?;
     kwargs.set_item("comment", result.comment)?;
     let instance = core_class.call((), Some(kwargs))?;
     Ok(instance.to_object(py))

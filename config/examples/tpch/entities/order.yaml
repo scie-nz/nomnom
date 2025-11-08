@@ -1,10 +1,11 @@
 # Order entity - represents a customer order
 # Based on TPC-H ORDERS table
+# Simplified version without transforms - just plain database fields
 
 entity:
   name: Order
-  type: root  # Root entity - can be loaded from JSON/CSV
-  doc: "Represents a customer order containing line items"
+  source_type: root  # Root entity - can be loaded from JSON/CSV
+  doc: "Represents a customer order"
 
   fields:
     # Order identification
@@ -53,16 +54,11 @@ entity:
       doc: "Order comments"
       nullable: true
 
-    # Derived field - count of line items
-    - name: line_item_count
-      type: Integer
-      doc: "Number of line items in this order"
-      nullable: true
-      computed_from:
-        transform: count_children
-        sources: []
-        args:
-          child_entity: OrderLineItem
+    # Array of line items (for extracting child OrderLineItem entities)
+    - name: line_items
+      type: List[Object]
+      doc: "Array of line items in this order (each item is a dict with line item fields)"
+      nullable: false
 
   # Database persistence configuration
   persistence:

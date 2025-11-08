@@ -1,173 +1,160 @@
 # OrderLineItem entity - represents a line item within an order
 # Based on TPC-H LINEITEM table
-# This is a derived entity that extracts line items from an Order
+# Simplified version - just plain database fields
 
 entity:
   name: OrderLineItem
-  type: derived  # Derived from parent Order entity
-  parent: Order
+  source_type: derived  # Derived from Order parent
   repeated_for:
     entity: Order
-    field: line_items
-    each_known_as: line_item_data
+    field: line_items  # Extract from line_items array in Order
+    each_known_as: item  # Reference each line item as 'item'
   doc: "Represents a single line item within an order"
 
   fields:
-    # Copy order key from parent
+    # Link to parent order - copy from parent Order
     - name: order_key
       type: String
-      doc: "Order key (copied from parent)"
+      doc: "Order key (foreign key to orders table)"
       nullable: false
       computed_from:
-        transform: copy_from_parent
+        transform: copy_field
         sources:
-          - source: parent
+          - source: Order
             field: order_key
 
-    # Line item specific fields
+    # Line item specific fields - extract from JSON item object
     - name: line_number
       type: Integer
       doc: "Line item sequence number within order"
       nullable: false
       computed_from:
-        transform: extract_field
+        transform: json_get_int
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: line_number
+          field: "line_number"
 
     - name: part_key
       type: String
       doc: "Foreign key to product/part"
       nullable: false
       computed_from:
-        transform: extract_field
+        transform: json_get_string
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: part_key
+          field: "part_key"
 
     - name: supplier_key
       type: String
       doc: "Foreign key to supplier"
       nullable: true
       computed_from:
-        transform: extract_field
+        transform: json_get_optional_string
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: supplier_key
+          field: "supplier_key"
 
     - name: quantity
       type: Integer
       doc: "Quantity ordered"
       nullable: false
       computed_from:
-        transform: extract_field
+        transform: json_get_int
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: quantity
+          field: "quantity"
 
     - name: extended_price
       type: Float
       doc: "Extended price (quantity * price)"
       nullable: false
       computed_from:
-        transform: extract_field
+        transform: json_get_float
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: extended_price
+          field: "extended_price"
 
     - name: discount
       type: Float
       doc: "Discount percentage (0.00 to 0.10)"
       nullable: true
       computed_from:
-        transform: extract_field
+        transform: json_get_optional_float
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: discount
+          field: "discount"
 
     - name: tax
       type: Float
       doc: "Tax percentage"
       nullable: true
       computed_from:
-        transform: extract_field
+        transform: json_get_optional_float
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: tax
+          field: "tax"
 
     - name: return_flag
       type: String
       doc: "Return flag (R=returned, A=accepted)"
       nullable: true
       computed_from:
-        transform: extract_field
+        transform: json_get_optional_string
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: return_flag
+          field: "return_flag"
 
     - name: line_status
       type: String
       doc: "Line status (O=open, F=fulfilled)"
       nullable: true
       computed_from:
-        transform: extract_field
+        transform: json_get_optional_string
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: line_status
+          field: "line_status"
 
     - name: ship_date
       type: String
       doc: "Ship date (YYYY-MM-DD)"
       nullable: true
       computed_from:
-        transform: extract_field
+        transform: json_get_optional_string
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: ship_date
+          field: "ship_date"
 
     - name: commit_date
       type: String
       doc: "Commit date (YYYY-MM-DD)"
       nullable: true
       computed_from:
-        transform: extract_field
+        transform: json_get_optional_string
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: commit_date
+          field: "commit_date"
 
     - name: receipt_date
       type: String
       doc: "Receipt date (YYYY-MM-DD)"
       nullable: true
       computed_from:
-        transform: extract_field
+        transform: json_get_optional_string
         sources:
-          - source: parent
-            field: line_item_data
+          - item
         args:
-          field_path: receipt_date
+          field: "receipt_date"
 
   # Database persistence configuration
   persistence:

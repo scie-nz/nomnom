@@ -67,6 +67,7 @@ pub fn generate_models(
     writeln!(output, "//! Diesel models generated from entity YAML configs\n")?;
     writeln!(output, "use diesel::prelude::*;")?;
     writeln!(output, "use serde::{{Serialize, Deserialize}};")?;
+    writeln!(output, "use bigdecimal::BigDecimal;")?;
     writeln!(output, "use crate::schema::*;\n")?;
 
     // For each entity with persistence, generate a model struct
@@ -76,19 +77,63 @@ pub fn generate_models(
             if let Ok(yaml) = serde_yaml::from_str::<EntityWrapper>(&yaml_content) {
                 if let Some(persistence) = yaml.entity.persistence {
                     if let Some(db_config) = persistence.database {
-                        // Generate struct
-                        writeln!(output, "#[derive(Debug, Clone, Queryable, Insertable, Serialize, Deserialize)]")?;
+                        // Generate main struct (Queryable only - for reading from DB)
+                        writeln!(output, "#[derive(Debug, Clone, Queryable, Serialize, Deserialize)]")?;
                         writeln!(output, "#[diesel(table_name = {})]", db_config.conformant_table)?;
                         writeln!(output, "pub struct {} {{", entity.name)?;
 
                         // If primary_key section exists, output it first
-                        if let Some(ref pk_config) = persistence.primary_key {
+                        let has_autogen_pk = if let Some(ref pk_config) = persistence.primary_key {
                             let rust_type = match pk_config.key_type.as_str() {
                                 "Integer" => "i32",
                                 "String" => "String",
                                 _ => "i32",
                             };
                             writeln!(output, "    pub {}: {},", pk_config.name, rust_type)?;
+                            pk_config.key_type == "Integer"  // Assume Integer PKs are auto-generated
+                        } else {
+                            false
+                        };
+
+                        // Generate fields from field_overrides
+                        for field in &persistence.field_overrides {
+                            let rust_type = match field.field_type.as_str() {
+                                "String" => "String",
+                                "Integer" => "i32",
+                                "Float" => "BigDecimal",
+                                "Boolean" => "bool",
+                                "DateTime" => "chrono::NaiveDateTime",
+                                _ => "String",
+                            };
+
+                            let final_type = if field.nullable {
+                                format!("Option<{}>", rust_type)
+                            } else {
+                                rust_type.to_string()
+                            };
+
+                            writeln!(output, "    pub {}: {},", field.name, final_type)?;
+                        }
+
+                        writeln!(output, "}}\n")?;
+
+                        // Generate New* struct (for reference - not used with column-based insertion)
+                        // This excludes auto-generated primary key fields
+                        // NOTE: We don't derive Insertable to avoid f64 issues - use column-based insertion instead
+                        writeln!(output, "#[derive(Debug, Clone)]")?;
+                        writeln!(output, "pub struct New{} {{", entity.name)?;
+
+                        // Skip primary key if it's auto-generated
+                        // Otherwise include it
+                        if let Some(ref pk_config) = persistence.primary_key {
+                            if !has_autogen_pk {
+                                let rust_type = match pk_config.key_type.as_str() {
+                                    "Integer" => "i32",
+                                    "String" => "String",
+                                    _ => "i32",
+                                };
+                                writeln!(output, "    pub {}: {},", pk_config.name, rust_type)?;
+                            }
                         }
 
                         // Generate fields from field_overrides
@@ -96,7 +141,7 @@ pub fn generate_models(
                             let rust_type = match field.field_type.as_str() {
                                 "String" => "String",
                                 "Integer" => "i32",
-                                "Float" => "f64",
+                                "Float" => "BigDecimal",
                                 "Boolean" => "bool",
                                 "DateTime" => "chrono::NaiveDateTime",
                                 _ => "String",

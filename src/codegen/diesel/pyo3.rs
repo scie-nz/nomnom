@@ -27,6 +27,8 @@ struct FieldOverride {
 #[derive(Deserialize)]
 struct PrimaryKeyConfig {
     name: String,
+    #[serde(rename = "type")]
+    key_type: String,
     #[serde(default)]
     autogenerate: bool,
 }
@@ -72,6 +74,7 @@ pub fn generate_pyo3_persistence(
 
     writeln!(output, "//! Auto-generated PyO3 get_or_create methods\n")?;
     writeln!(output, "use pyo3::prelude::*;")?;
+    writeln!(output, "use bigdecimal::{{BigDecimal, FromPrimitive, ToPrimitive}};")?;
     writeln!(output, "use crate::db::operations::GetOrCreate;")?;
     writeln!(output, "use crate::models::*;")?;
     writeln!(output, "use crate::python::PyDatabase;")?;
@@ -100,49 +103,81 @@ pub fn generate_pyo3_persistence(
                         writeln!(output, "    database: &PyDatabase,")?;
                         writeln!(output, ") -> PyResult<PyObject> {{")?;
 
-                        writeln!(output, "    // Convert Core to Diesel model")?;
+                        writeln!(output, "    // Convert Core to Diesel {} model", entity_name)?;
                         writeln!(output, "    let diesel_model = {} {{", entity_name)?;
 
-                        // Determine if we have an auto-generated primary key
-                        let has_autogen_pk = persistence.database.as_ref()
-                            .map_or(false, |db| db.autogenerate_conformant_id);
-
-                        // Add auto-generated primary key with default value if needed (from primary_key section)
+                        // Add primary key - use placeholder for auto-generated, extract for manual
                         if let Some(ref pk_config) = persistence.primary_key {
                             if pk_config.autogenerate {
-                                writeln!(output, "        {}: 0,  // Auto-generated, placeholder value", pk_config.name)?;
+                                // Auto-generated - use placeholder (will be ignored in column-based insert)
+                                writeln!(output, "        {}: 0,  // Placeholder for auto-generated ID", pk_config.name)?;
+                            } else {
+                                // Manual/computed PK - extract from core
+                                if pk_config.key_type == "Float" {
+                                    writeln!(output, "        {}: {{", pk_config.name)?;
+                                    writeln!(output, "            let value = core.getattr(\"{}\")?.extract::<Option<f64>>()?", pk_config.name)?;
+                                    writeln!(output, "                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(")?;
+                                    writeln!(output, "                    \"{} is required\"))?;", pk_config.name)?;
+                                    writeln!(output, "            BigDecimal::from_f64(value)")?;
+                                    writeln!(output, "                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(")?;
+                                    writeln!(output, "                    \"Invalid float value for {}\"))?", pk_config.name)?;
+                                    writeln!(output, "        }},")?;
+                                } else {
+                                    let rust_type = match pk_config.key_type.as_str() {
+                                        "Integer" => "i32",
+                                        "String" => "String",
+                                        "Boolean" => "bool",
+                                        _ => "String",
+                                    };
+                                    writeln!(output, "        {}: core.getattr(\"{}\")?.extract::<Option<{}>>()?", pk_config.name, pk_config.name, rust_type)?;
+                                    writeln!(output, "            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(")?;
+                                    writeln!(output, "                \"{} is required\"))?,", pk_config.name)?;
+                                }
                             }
                         }
 
-                        // Generate field mappings
+                        // Generate field mappings (skip primary keys as they're handled above or auto-generated)
                         for field in &persistence.field_overrides {
-                            // Handle primary key fields from field_overrides
+                            // Skip primary key fields - they're either auto-generated or handled above
                             if field.primary_key {
-                                // Only use placeholder for Integer auto-increment PKs
-                                let is_db_autoinc = has_autogen_pk && field.field_type == "Integer";
-
-                                if is_db_autoinc {
-                                    // Database auto-increment - use placeholder
-                                    writeln!(output, "        {}: 0,  // Database auto-increment, placeholder value", field.name)?;
-                                } else {
-                                    // Computed or manual primary key - extract from core
-                                    if field.nullable {
-                                        writeln!(output, "        {}: core.getattr(\"{}\")?.extract()?,", field.name, field.name)?;
-                                    } else {
-                                        writeln!(output, "        {}: core.getattr(\"{}\")?.extract::<Option<String>>()?", field.name, field.name)?;
-                                        writeln!(output, "            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(")?;
-                                        writeln!(output, "                \"{} is required\"))?,", field.name)?;
-                                    }
-                                }
                                 continue;
                             }
 
                             if field.nullable {
-                                writeln!(output, "        {}: core.getattr(\"{}\")?.extract()?,", field.name, field.name)?;
+                                // Nullable fields
+                                if field.field_type == "Float" {
+                                    // Nullable Float - extract as Option<f64> and convert to Option<BigDecimal>
+                                    writeln!(output, "        {}: {{", field.name)?;
+                                    writeln!(output, "            let value: Option<f64> = core.getattr(\"{}\")?.extract()?;", field.name)?;
+                                    writeln!(output, "            value.and_then(BigDecimal::from_f64)")?;
+                                    writeln!(output, "        }},")?;
+                                } else {
+                                    writeln!(output, "        {}: core.getattr(\"{}\")?.extract()?,", field.name, field.name)?;
+                                }
                             } else {
-                                writeln!(output, "        {}: core.getattr(\"{}\")?.extract::<Option<String>>()?", field.name, field.name)?;
-                                writeln!(output, "            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(")?;
-                                writeln!(output, "                \"{} is required\"))?,", field.name)?;
+                                // Non-nullable fields
+                                if field.field_type == "Float" {
+                                    // Non-nullable Float - extract as f64 and convert to BigDecimal
+                                    writeln!(output, "        {}: {{", field.name)?;
+                                    writeln!(output, "            let value = core.getattr(\"{}\")?.extract::<Option<f64>>()?", field.name)?;
+                                    writeln!(output, "                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(")?;
+                                    writeln!(output, "                    \"{} is required\"))?;", field.name)?;
+                                    writeln!(output, "            BigDecimal::from_f64(value)")?;
+                                    writeln!(output, "                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(")?;
+                                    writeln!(output, "                    \"Invalid float value for {}\"))?", field.name)?;
+                                    writeln!(output, "        }},")?;
+                                } else {
+                                    // Map field type to Rust type for extraction
+                                    let rust_type = match field.field_type.as_str() {
+                                        "Integer" => "i32",
+                                        "String" => "String",
+                                        "Boolean" => "bool",
+                                        _ => "String",  // Default to String for unknown types
+                                    };
+                                    writeln!(output, "        {}: core.getattr(\"{}\")?.extract::<Option<{}>>()?", field.name, field.name, rust_type)?;
+                                    writeln!(output, "            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(")?;
+                                    writeln!(output, "                \"{} is required\"))?,", field.name)?;
+                                }
                             }
                         }
 
@@ -160,15 +195,28 @@ pub fn generate_pyo3_persistence(
 
                         // Include primary key in return value (from primary_key section)
                         if let Some(ref pk_config) = persistence.primary_key {
-                            writeln!(output, "    kwargs.set_item(\"{}\", result.{})?;", pk_config.name, pk_config.name)?;
+                            if pk_config.key_type == "Float" {
+                                writeln!(output, "    kwargs.set_item(\"{}\", result.{}.to_f64())?;", pk_config.name, pk_config.name)?;
+                            } else {
+                                writeln!(output, "    kwargs.set_item(\"{}\", result.{})?;", pk_config.name, pk_config.name)?;
+                            }
                         }
 
                         // Include all fields (including primary keys from field_overrides)
                         for field in &persistence.field_overrides {
-                            if field.nullable {
-                                writeln!(output, "    kwargs.set_item(\"{}\", result.{})?;", field.name, field.name)?;
+                            if field.field_type == "Float" {
+                                // Convert BigDecimal to f64 for Python
+                                if field.nullable {
+                                    writeln!(output, "    kwargs.set_item(\"{}\", result.{}.and_then(|bd| bd.to_f64()))?;", field.name, field.name)?;
+                                } else {
+                                    writeln!(output, "    kwargs.set_item(\"{}\", Some(result.{}.to_f64()))?;", field.name, field.name)?;
+                                }
                             } else {
-                                writeln!(output, "    kwargs.set_item(\"{}\", Some(result.{}))?;", field.name, field.name)?;
+                                if field.nullable {
+                                    writeln!(output, "    kwargs.set_item(\"{}\", result.{})?;", field.name, field.name)?;
+                                } else {
+                                    writeln!(output, "    kwargs.set_item(\"{}\", Some(result.{}))?;", field.name, field.name)?;
+                                }
                             }
                         }
 

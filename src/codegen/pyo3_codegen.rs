@@ -504,10 +504,12 @@ fn map_field_type(field_type: &str, nullable: bool) -> String {
         "Bool" | "Boolean" => "bool",
         "DateTime" | "Date" => "String",
         "List[String]" => "Vec<String>",
+        "List[Object]" | "List[Json]" => "Vec<serde_json::Value>",
+        "Object" | "Json" => "serde_json::Value",
         _ => "String",
     }.to_string();
 
-    if nullable && field_type != "List[String]" {
+    if nullable && field_type != "List[String]" && field_type != "List[Object]" && field_type != "List[Json]" {
         format!("Option<{}>", base_type)
     } else {
         base_type

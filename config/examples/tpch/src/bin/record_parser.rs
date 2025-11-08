@@ -460,7 +460,7 @@ struct Cli {
 #[derive(Debug)]
 struct ParseResults {
     order: OrderCore,
-    order_line_item: OrderLineItemCore,
+    order_line_item: Vec<OrderLineItemCore>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -557,14 +557,16 @@ fn extract_all_entities(
         entity_shas.insert("Order".to_string(), root_sha);
     }
 
-    let order_line_item = OrderLineItemCore::from_sources(&order)?;
+    let order_line_item = OrderLineItemCore::from_parent_repeated(&order)?;
     if let Some(tracker) = lineage_tracker.as_mut() {
-        let fields = entity_to_fields(&order_line_item);
-        let parent_shas: Vec<String> = vec![
-            entity_shas.get("Order").cloned().unwrap_or_default(),
-        ];
-        let sha = tracker.compute_sha("OrderLineItem", &fields, &parent_shas, true);
-        entity_shas.insert("OrderLineItem".to_string(), sha);
+        for (idx, item) in order_line_item.iter().enumerate() {
+            let fields = entity_to_fields(item);
+            let parent_shas: Vec<String> = vec![
+                entity_shas.get("Order").cloned().unwrap_or_default(),
+            ];
+            let sha = tracker.compute_sha("OrderLineItem", &fields, &parent_shas, true);
+            entity_shas.insert(format!("OrderLineItem[{}]", idx), sha);
+        }
     }
 
     Ok((ParseResults {
@@ -595,14 +597,15 @@ fn output_json_entities(
         }
         println!("{}", serde_json::to_string(&json)?);
     }
-    {
+    for (i, entity) in results.order_line_item.iter().enumerate() {
         let mut json = serde_json::json!({
-            "entity_type": "OrderLineItem",
-            "data": serde_json::to_value(&results.order_line_item)?,
+            "entity_type": format!("OrderLineItem[{}]", i),
+            "data": serde_json::to_value(entity)?,
         });
         if enable_lineage {
             if let Some(tracker) = lineage_tracker {
-                if let Some(sha) = entity_shas.get("OrderLineItem") {
+                let sha_key = format!("OrderLineItem[{}]", i);
+                if let Some(sha) = entity_shas.get(&sha_key) {
                     let lineage = tracker.create_metadata(sha);
                     json["lineage"] = serde_json::to_value(&lineage)?;
                 }
@@ -619,10 +622,10 @@ fn output_sql_statements(results: &ParseResults) -> Result<(), Box<dyn Error>> {
     println!("-- SQL Statements (Dry-Run Mode)");
     println!("-- ========================================");
     println!();
-    output_order_line_item_sql(&results.order_line_item, None)?;
+    for (i, entity) in results.order_line_item.iter().enumerate() {
+        output_order_line_item_sql(entity, Some(i))?;
+    }
     output_order_sql(&results.order, None)?;
-    output_customer_sql(&results.customer, None)?;
-    output_product_sql(&results.product, None)?;
     Ok(())
 }
 
@@ -640,39 +643,39 @@ fn output_order_line_item_sql(entity: &OrderLineItemCore, index: Option<usize>) 
     println!();
     println!("SELECT * FROM order_line_items");
     println!("WHERE");
-    println!("      order_key {}", sql_cmp_opt(&entity.order_key));
-    println!("  AND line_number {}", sql_cmp_opt(&entity.line_number));
+    println!("      order_key {}", sql_cmp_string(&entity.order_key));
+    println!("  AND line_number {}", sql_cmp(&entity.line_number));
     println!("LIMIT 1;");
     println!();
     println!("-- If not found:");
     println!("INSERT INTO order_line_items (order_key, line_number, part_key, supplier_key, quantity, extended_price, discount, tax, return_flag, line_status, ship_date, commit_date, receipt_date)");
     println!("VALUES");
     print!("  (");
-    print!("{}", sql_opt(&entity.order_key));
+    print!("{}", sql_opt_string(&entity.order_key));
     print!(", ");
     print!("{}", sql_opt(&entity.line_number));
     print!(", ");
-    print!("{}", sql_opt(&entity.part_key));
+    print!("{}", sql_opt_string(&entity.part_key));
     print!(", ");
-    print!("{}", sql_opt(&entity.supplier_key));
+    print!("{}", sql_opt_string_option(&entity.supplier_key));
     print!(", ");
     print!("{}", sql_opt(&entity.quantity));
     print!(", ");
     print!("{}", sql_opt(&entity.extended_price));
     print!(", ");
-    print!("{}", sql_opt(&entity.discount));
+    print!("{}", sql_opt_option(&entity.discount));
     print!(", ");
-    print!("{}", sql_opt(&entity.tax));
+    print!("{}", sql_opt_option(&entity.tax));
     print!(", ");
-    print!("{}", sql_opt(&entity.return_flag));
+    print!("{}", sql_opt_string_option(&entity.return_flag));
     print!(", ");
-    print!("{}", sql_opt(&entity.line_status));
+    print!("{}", sql_opt_string_option(&entity.line_status));
     print!(", ");
-    print!("{}", sql_opt(&entity.ship_date));
+    print!("{}", sql_opt_string_option(&entity.ship_date));
     print!(", ");
-    print!("{}", sql_opt(&entity.commit_date));
+    print!("{}", sql_opt_string_option(&entity.commit_date));
     print!(", ");
-    print!("{}", sql_opt(&entity.receipt_date));
+    print!("{}", sql_opt_string_option(&entity.receipt_date));
     println!(")");
     println!();
     Ok(())
@@ -692,32 +695,32 @@ fn output_order_sql(entity: &OrderCore, index: Option<usize>) -> Result<(), Box<
     println!();
     println!("SELECT * FROM orders");
     println!("WHERE");
-    println!("      order_key {}", sql_cmp_opt(&entity.order_key));
+    println!("      order_key {}", sql_cmp_string(&entity.order_key));
     println!("LIMIT 1;");
     println!();
     println!("-- If not found:");
-    println!("INSERT INTO orders (order_key, customer_key, order_status, total_price, order_date, order_priority, clerk, ship_priority, comment, line_item_count)");
+    println!("INSERT INTO orders (order_key, customer_key, order_status, total_price, order_date, order_priority, clerk, ship_priority, comment, line_items)");
     println!("VALUES");
     print!("  (");
-    print!("{}", sql_opt(&entity.order_key));
+    print!("{}", sql_opt_string(&entity.order_key));
     print!(", ");
-    print!("{}", sql_opt(&entity.customer_key));
+    print!("{}", sql_opt_string(&entity.customer_key));
     print!(", ");
-    print!("{}", sql_opt(&entity.order_status));
+    print!("{}", sql_opt_string(&entity.order_status));
     print!(", ");
     print!("{}", sql_opt(&entity.total_price));
     print!(", ");
-    print!("{}", sql_opt(&entity.order_date));
+    print!("{}", sql_opt_string(&entity.order_date));
     print!(", ");
-    print!("{}", sql_opt(&entity.order_priority));
+    print!("{}", sql_opt_string_option(&entity.order_priority));
     print!(", ");
-    print!("{}", sql_opt(&entity.clerk));
+    print!("{}", sql_opt_string_option(&entity.clerk));
     print!(", ");
-    print!("{}", sql_opt(&entity.ship_priority));
+    print!("{}", sql_opt_option(&entity.ship_priority));
     print!(", ");
-    print!("{}", sql_opt(&entity.comment));
+    print!("{}", sql_opt_string_option(&entity.comment));
     print!(", ");
-    print!("{}", sql_opt(&entity.line_item_count));
+    print!("{}", sql_opt_json_array(&entity.line_items));
     println!(")");
     println!();
     Ok(())
@@ -737,28 +740,28 @@ fn output_customer_sql(entity: &CustomerCore, index: Option<usize>) -> Result<()
     println!();
     println!("SELECT * FROM customers");
     println!("WHERE");
-    println!("      customer_key {}", sql_cmp_opt(&entity.customer_key));
+    println!("      customer_key {}", sql_cmp_string(&entity.customer_key));
     println!("LIMIT 1;");
     println!();
     println!("-- If not found:");
     println!("INSERT INTO customers (customer_key, name, address, nation_key, phone, account_balance, market_segment, comment)");
     println!("VALUES");
     print!("  (");
-    print!("{}", sql_opt(&entity.customer_key));
+    print!("{}", sql_opt_string(&entity.customer_key));
     print!(", ");
-    print!("{}", sql_opt(&entity.name));
+    print!("{}", sql_opt_string(&entity.name));
     print!(", ");
-    print!("{}", sql_opt(&entity.address));
+    print!("{}", sql_opt_string_option(&entity.address));
     print!(", ");
-    print!("{}", sql_opt(&entity.nation_key));
+    print!("{}", sql_opt_string_option(&entity.nation_key));
     print!(", ");
-    print!("{}", sql_opt(&entity.phone));
+    print!("{}", sql_opt_string_option(&entity.phone));
     print!(", ");
     print!("{}", sql_opt(&entity.account_balance));
     print!(", ");
-    print!("{}", sql_opt(&entity.market_segment));
+    print!("{}", sql_opt_string_option(&entity.market_segment));
     print!(", ");
-    print!("{}", sql_opt(&entity.comment));
+    print!("{}", sql_opt_string_option(&entity.comment));
     println!(")");
     println!();
     Ok(())
@@ -778,47 +781,91 @@ fn output_product_sql(entity: &ProductCore, index: Option<usize>) -> Result<(), 
     println!();
     println!("SELECT * FROM products");
     println!("WHERE");
-    println!("      part_key {}", sql_cmp_opt(&entity.part_key));
+    println!("      part_key {}", sql_cmp_string(&entity.part_key));
     println!("LIMIT 1;");
     println!();
     println!("-- If not found:");
     println!("INSERT INTO products (part_key, name, manufacturer, brand, product_type, size, container, retail_price, comment)");
     println!("VALUES");
     print!("  (");
-    print!("{}", sql_opt(&entity.part_key));
+    print!("{}", sql_opt_string(&entity.part_key));
     print!(", ");
-    print!("{}", sql_opt(&entity.name));
+    print!("{}", sql_opt_string(&entity.name));
     print!(", ");
-    print!("{}", sql_opt(&entity.manufacturer));
+    print!("{}", sql_opt_string_option(&entity.manufacturer));
     print!(", ");
-    print!("{}", sql_opt(&entity.brand));
+    print!("{}", sql_opt_string_option(&entity.brand));
     print!(", ");
-    print!("{}", sql_opt(&entity.product_type));
+    print!("{}", sql_opt_string_option(&entity.product_type));
     print!(", ");
-    print!("{}", sql_opt(&entity.size));
+    print!("{}", sql_opt_option(&entity.size));
     print!(", ");
-    print!("{}", sql_opt(&entity.container));
+    print!("{}", sql_opt_string_option(&entity.container));
     print!(", ");
     print!("{}", sql_opt(&entity.retail_price));
     print!(", ");
-    print!("{}", sql_opt(&entity.comment));
+    print!("{}", sql_opt_string_option(&entity.comment));
     println!(")");
     println!();
     Ok(())
 }
 
-/// Format Option<String> as SQL value ('value' or NULL)
-fn sql_opt(opt: &Option<String>) -> String {
+/// Format any value as SQL literal
+fn sql_opt<T: std::fmt::Display>(value: &T) -> String {
+    format!("{}", value)
+}
+
+/// Format Option<T> as SQL value
+fn sql_opt_option<T: std::fmt::Display>(opt: &Option<T>) -> String {
+    match opt {
+        Some(v) => format!("{}", v),
+        None => "NULL".to_string(),
+    }
+}
+
+/// Format String as SQL string literal
+fn sql_opt_string(s: &String) -> String {
+    format!("'{}'", sql_escape(s))
+}
+
+/// Format Option<String> as SQL string literal
+fn sql_opt_string_option(opt: &Option<String>) -> String {
     match opt {
         Some(s) => format!("'{}'", sql_escape(s)),
         None => "NULL".to_string(),
     }
 }
 
+/// Format Vec<serde_json::Value> as SQL (JSON array)
+fn sql_opt_json_array(arr: &Vec<serde_json::Value>) -> String {
+    match serde_json::to_string(arr) {
+        Ok(json) => format!("'{}'", sql_escape(&json)),
+        Err(_) => "NULL".to_string(),
+    }
+}
+
+/// Format String as SQL comparison (field = 'value')
+fn sql_cmp_string(s: &String) -> String {
+    format!("= '{}'", sql_escape(s))
+}
+
 /// Format Option<String> as SQL comparison (field = 'value' OR field IS NULL)
-fn sql_cmp_opt(opt: &Option<String>) -> String {
+fn sql_cmp_string_option(opt: &Option<String>) -> String {
     match opt {
         Some(s) => format!("= '{}'", sql_escape(s)),
+        None => "IS NULL".to_string(),
+    }
+}
+
+/// Format numeric value as SQL comparison
+fn sql_cmp<T: std::fmt::Display>(value: &T) -> String {
+    format!("= {}", value)
+}
+
+/// Format Option<T> as SQL comparison
+fn sql_cmp_option<T: std::fmt::Display>(opt: &Option<T>) -> String {
+    match opt {
+        Some(v) => format!("= {}", v),
         None => "IS NULL".to_string(),
     }
 }

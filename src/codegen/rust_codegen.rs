@@ -294,25 +294,38 @@ fn generate_root_impl<W: Write>(
     writeln!(writer, "        raw_input: &str,")?;
     writeln!(writer, "    ) -> Result<Self, String> {{")?;
 
-    // Generate field extraction for each field
-    for field in &entity.fields {
-        if let Some(ref computed) = field.computed_from {
-            // Field computed via transform
-            generate_field_extraction(writer, field, computed, "        ")?;
-        } else if field.root_source.is_some() {
-            // Field sourced from raw_input
-            writeln!(writer, "        // Field '{}' from root source", field.name)?;
-            writeln!(writer, "        let {} = raw_input.to_string();", field.name)?;
+    // Check if any fields have extraction logic
+    let has_extraction = entity.fields.iter().any(|f| {
+        f.computed_from.is_some() || f.root_source.is_some()
+    });
+
+    if has_extraction {
+        // Generate field extraction for each field
+        for field in &entity.fields {
+            if let Some(ref computed) = field.computed_from {
+                // Field computed via transform
+                generate_field_extraction(writer, field, computed, "        ")?;
+            } else if field.root_source.is_some() {
+                // Field sourced from raw_input
+                writeln!(writer, "        // Field '{}' from root source", field.name)?;
+                writeln!(writer, "        let {} = raw_input.to_string();", field.name)?;
+            }
         }
+
+        // Build and return struct
+        writeln!(writer)?;
+        writeln!(writer, "        Ok(Self {{")?;
+        for field in &entity.fields {
+            writeln!(writer, "            {},", field.name)?;
+        }
+        writeln!(writer, "        }})")?;
+    } else {
+        // No extraction logic - deserialize from JSON
+        writeln!(writer, "        // Deserialize from JSON")?;
+        writeln!(writer, "        serde_json::from_str(raw_input)")?;
+        writeln!(writer, "            .map_err(|e| format!(\"Failed to parse JSON: {{}}\", e))")?;
     }
 
-    // Build and return struct
-    writeln!(writer)?;
-    writeln!(writer, "        Ok(Self {{")?;
-    for field in &entity.fields {
-        writeln!(writer, "            {},", field.name)?;
-    }
-    writeln!(writer, "        }})")?;
     writeln!(writer, "    }}\n")?;
 
     // Serialization methods
@@ -556,10 +569,10 @@ fn generate_field_extraction<W: Write>(
             // Parent field reference: pass the field value as reference
             call_args.push(format!("&{}.{}", source_var, field_name));
         } else {
-            // Direct source reference: wrap in Some() for compatibility with &Option<String> transforms
-            // Both iterator variables (&String from Vec<String>) and self-references (String fields)
-            // need to be wrapped when the transform expects &Option<String>
-            call_args.push(format!("&Some({}.clone())", source_var));
+            // Direct source reference: pass the iterator variable directly
+            // For repeated_for patterns, the iterator variable (e.g., `item`) is already a reference
+            // (e.g., `&serde_json::Value` when iterating over `Vec<serde_json::Value>`)
+            call_args.push(source_var.clone());
         }
     }
 
@@ -622,10 +635,12 @@ fn map_field_type(field_type: &str, nullable: bool) -> String {
         "Bool" | "Boolean" => "bool",
         "DateTime" | "Date" => "String", // ISO8601 strings
         "List[String]" => "Vec<String>",
+        "List[Object]" | "List[Json]" => "Vec<serde_json::Value>",
+        "Object" | "Json" => "serde_json::Value",
         _ => "String", // Default to String
     }.to_string();
 
-    if nullable && field_type != "List[String]" {
+    if nullable && field_type != "List[String]" && field_type != "List[Object]" && field_type != "List[Json]" {
         format!("Option<{}>", base_type)
     } else {
         base_type
