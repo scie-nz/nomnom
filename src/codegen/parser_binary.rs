@@ -830,6 +830,7 @@ fn generate_entity_sql_function(entity: &EntityDef) -> String {
     }
 
     code.push_str("    println!(\")\");\n");
+    code.push_str("    println!(\";\");\n");  // Add semicolon to complete SQL statement
     code.push_str("    println!();\n");
 
     code.push_str("    Ok(())\n");

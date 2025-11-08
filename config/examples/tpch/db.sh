@@ -81,7 +81,24 @@ function migrate_db() {
     # Check if diesel CLI is installed
     if ! command -v diesel &> /dev/null; then
         echo -e "${YELLOW}Diesel CLI not found. Installing...${NC}"
+
+        # Check if libpq is installed
+        if [ ! -d "/opt/homebrew/opt/libpq" ]; then
+            echo -e "${RED}✗ PostgreSQL client library (libpq) not found${NC}"
+            echo -e "${YELLOW}Install it with: brew install libpq${NC}"
+            return 1
+        fi
+
+        # Set linker flags for PostgreSQL
+        export RUSTFLAGS="-L /opt/homebrew/opt/libpq/lib"
+        export PQ_LIB_DIR="/opt/homebrew/opt/libpq/lib"
+
         cargo install diesel_cli --no-default-features --features postgres
+
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}✗ Failed to install diesel CLI${NC}"
+            return 1
+        fi
     fi
 
     # Run migrations
