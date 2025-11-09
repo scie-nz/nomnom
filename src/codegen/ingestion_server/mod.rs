@@ -98,6 +98,10 @@ pub fn generate_all(
     println!("  ✓ Generating .env.example...");
     generate_env_example(output_dir, config)?;
 
+    // Generate Dockerfile
+    println!("  ✓ Generating Dockerfile...");
+    generate_dockerfile(output_dir)?;
+
     println!();
     println!("✨ Ingestion server generated successfully!");
     println!();
@@ -107,6 +111,10 @@ pub fn generate_all(
     println!("  3. Edit .env with your database credentials");
     println!("  4. cargo build --release");
     println!("  5. cargo run --release");
+    println!();
+    println!("🐳 Or run with Docker:");
+    println!("  docker build -t ingestion-api .");
+    println!("  docker run -p {}:{} --env-file .env ingestion-api", config.port, config.port);
     println!();
     println!("🌐 Server will be available at:");
     println!("  API:     http://localhost:{}", config.port);
@@ -138,6 +146,57 @@ fn generate_env_example(output_dir: &Path, config: &IngestionServerConfig) -> Re
     writeln!(output)?;
     writeln!(output, "# Logging")?;
     writeln!(output, "RUST_LOG=info")?;
+
+    Ok(())
+}
+
+fn generate_dockerfile(output_dir: &Path) -> Result<(), Box<dyn Error>> {
+    use std::io::Write;
+
+    let dockerfile_path = output_dir.join("Dockerfile");
+    let mut file = std::fs::File::create(&dockerfile_path)?;
+
+    writeln!(file, "# Multi-stage Dockerfile for Rust ingestion API")?;
+    writeln!(file, "FROM rust:latest as builder")?;
+    writeln!(file)?;
+    writeln!(file, "# Install build dependencies")?;
+    writeln!(file, "RUN apt-get update && apt-get install -y \\")?;
+    writeln!(file, "    pkg-config \\")?;
+    writeln!(file, "    libssl-dev \\")?;
+    writeln!(file, "    libpq-dev \\")?;
+    writeln!(file, "    && rm -rf /var/lib/apt/lists/*")?;
+    writeln!(file)?;
+    writeln!(file, "WORKDIR /build")?;
+    writeln!(file)?;
+    writeln!(file, "# Copy manifests")?;
+    writeln!(file, "COPY Cargo.toml Cargo.lock* ./")?;
+    writeln!(file)?;
+    writeln!(file, "# Copy source")?;
+    writeln!(file, "COPY src ./src")?;
+    writeln!(file)?;
+    writeln!(file, "# Build release binary")?;
+    writeln!(file, "RUN cargo build --release")?;
+    writeln!(file)?;
+    writeln!(file, "# Runtime stage")?;
+    writeln!(file, "FROM debian:bookworm-slim")?;
+    writeln!(file)?;
+    writeln!(file, "# Install runtime dependencies")?;
+    writeln!(file, "RUN apt-get update && apt-get install -y \\")?;
+    writeln!(file, "    ca-certificates \\")?;
+    writeln!(file, "    libssl3 \\")?;
+    writeln!(file, "    libpq5 \\")?;
+    writeln!(file, "    && rm -rf /var/lib/apt/lists/*")?;
+    writeln!(file)?;
+    writeln!(file, "WORKDIR /app")?;
+    writeln!(file)?;
+    writeln!(file, "# Copy binary from builder")?;
+    writeln!(file, "COPY --from=builder /build/target/release/ingestion-server /app/")?;
+    writeln!(file)?;
+    writeln!(file, "# Expose default port")?;
+    writeln!(file, "EXPOSE 8080")?;
+    writeln!(file)?;
+    writeln!(file, "# Run the binary")?;
+    writeln!(file, "CMD [\"/app/ingestion-server\"]")?;
 
     Ok(())
 }

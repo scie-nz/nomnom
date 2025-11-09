@@ -15,6 +15,60 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - tpch_network
+
+  ingestion-api:
+    build:
+      context: /tmp/tpch-ingestion-server
+      dockerfile: Dockerfile
+    container_name: tpch_ingestion_api
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://tpch_user:tpch_password@postgres:5432/tpch_db
+      - PORT=8080
+      - HOST=0.0.0.0
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - tpch_network
+
+  dashboard-backend:
+    build:
+      context: /tmp/tpch-dashboard
+      dockerfile: Dockerfile.backend
+    container_name: tpch_dashboard_backend
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://tpch_user:tpch_password@postgres:5432/tpch_db
+      - PORT=3000
+      - HOST=0.0.0.0
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - tpch_network
+
+  dashboard-frontend:
+    build:
+      context: /tmp/tpch-dashboard
+      dockerfile: Dockerfile.frontend
+    container_name: tpch_dashboard_frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - dashboard-backend
+    networks:
+      - tpch_network
+
+networks:
+  tpch_network:
+    driver: bridge
 
 volumes:
   postgres_data:

@@ -12,17 +12,41 @@ pub fn generate_dockerfiles(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Generate Dockerfile.backend
+/// Generate Dockerfile.backend for Axum/Rust
 fn generate_backend_dockerfile(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     let dockerfile = output_dir.join("Dockerfile.backend");
     let mut output = std::fs::File::create(&dockerfile)?;
 
-    writeln!(output, "FROM python:3.11-slim\n")?;
+    writeln!(output, "# Multi-stage Dockerfile for Rust dashboard backend")?;
+    writeln!(output, "FROM rust:latest as builder\n")?;
+    writeln!(output, "# Install build dependencies")?;
+    writeln!(output, "RUN apt-get update && apt-get install -y \\")?;
+    writeln!(output, "    pkg-config \\")?;
+    writeln!(output, "    libssl-dev \\")?;
+    writeln!(output, "    libpq-dev \\")?;
+    writeln!(output, "    && rm -rf /var/lib/apt/lists/*\n")?;
+    writeln!(output, "WORKDIR /build\n")?;
+    writeln!(output, "# Copy manifests")?;
+    writeln!(output, "COPY Cargo.toml Cargo.lock* ./\n")?;
+    writeln!(output, "# Copy source")?;
+    writeln!(output, "COPY src ./src\n")?;
+    writeln!(output, "# Build release binary")?;
+    writeln!(output, "RUN cargo build --release\n")?;
+    writeln!(output, "# Runtime stage")?;
+    writeln!(output, "FROM debian:bookworm-slim\n")?;
+    writeln!(output, "# Install runtime dependencies")?;
+    writeln!(output, "RUN apt-get update && apt-get install -y \\")?;
+    writeln!(output, "    ca-certificates \\")?;
+    writeln!(output, "    libssl3 \\")?;
+    writeln!(output, "    libpq5 \\")?;
+    writeln!(output, "    && rm -rf /var/lib/apt/lists/*\n")?;
     writeln!(output, "WORKDIR /app\n")?;
-    writeln!(output, "COPY backend/requirements.txt .")?;
-    writeln!(output, "RUN pip install --no-cache-dir -r requirements.txt\n")?;
-    writeln!(output, "COPY backend/ .\n")?;
-    writeln!(output, "CMD [\"uvicorn\", \"main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\", \"--reload\"]")?;
+    writeln!(output, "# Copy binary from builder")?;
+    writeln!(output, "COPY --from=builder /build/target/release/dashboard /app/\n")?;
+    writeln!(output, "# Expose default port")?;
+    writeln!(output, "EXPOSE 3000\n")?;
+    writeln!(output, "# Run the binary")?;
+    writeln!(output, "CMD [\"/app/dashboard\"]")?;
 
     Ok(())
 }
@@ -60,13 +84,14 @@ pub fn generate_docker_compose(output_dir: &Path, _db_type: DatabaseType) -> Res
     writeln!(output, "      context: .")?;
     writeln!(output, "      dockerfile: Dockerfile.backend")?;
     writeln!(output, "    ports:")?;
-    writeln!(output, "      - \"8000:8000\"")?;
+    writeln!(output, "      - \"3000:3000\"")?;
     writeln!(output, "    environment:")?;
     writeln!(output, "      - DATABASE_URL=${{DATABASE_URL}}")?;
+    writeln!(output, "      - PORT=3000")?;
+    writeln!(output, "      - HOST=0.0.0.0")?;
+    writeln!(output, "      - RUST_LOG=info")?;
     writeln!(output, "    depends_on:")?;
     writeln!(output, "      - postgres  # Or mysql/mariadb depending on your setup")?;
-    writeln!(output, "    volumes:")?;
-    writeln!(output, "      - ./backend:/app  # Hot reload for development")?;
     writeln!(output, "    networks:")?;
     writeln!(output, "      - default\n")?;
 
