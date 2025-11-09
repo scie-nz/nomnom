@@ -11,6 +11,8 @@ mod parsers_rs;
 mod models_rs;
 mod database_rs;
 mod error_rs;
+mod message_envelope_rs;
+mod nats_client_rs;
 
 pub use cargo_toml::generate_cargo_toml;
 pub use main_rs::generate_main_rs;
@@ -19,6 +21,8 @@ pub use parsers_rs::generate_parsers_rs;
 pub use models_rs::generate_models_rs;
 pub use database_rs::generate_database_rs;
 pub use error_rs::generate_error_rs;
+pub use message_envelope_rs::generate_message_envelope_rs;
+pub use nats_client_rs::generate_nats_client_rs;
 
 /// Database type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +86,12 @@ pub fn generate_all(
     println!("  ✓ Generating parsers.rs...");
     generate_parsers_rs(entities, output_dir)?;
 
+    println!("  ✓ Generating message_envelope.rs...");
+    generate_message_envelope_rs(output_dir)?;
+
+    println!("  ✓ Generating nats_client.rs...");
+    generate_nats_client_rs(output_dir)?;
+
     println!("  ✓ Generating handlers.rs...");
     generate_handlers_rs(entities, output_dir)?;
 
@@ -101,6 +111,10 @@ pub fn generate_all(
     // Generate Dockerfile
     println!("  ✓ Generating Dockerfile...");
     generate_dockerfile(output_dir)?;
+
+    // Generate docker-compose.nats.yml
+    println!("  ✓ Generating docker-compose.nats.yml...");
+    generate_docker_compose_nats(output_dir, config)?;
 
     println!();
     println!("✨ Ingestion server generated successfully!");
@@ -144,6 +158,10 @@ fn generate_env_example(output_dir: &Path, config: &IngestionServerConfig) -> Re
     writeln!(output, "PORT={}", config.port)?;
     writeln!(output, "HOST=0.0.0.0")?;
     writeln!(output)?;
+    writeln!(output, "# NATS Configuration")?;
+    writeln!(output, "NATS_URL=nats://localhost:4222")?;
+    writeln!(output, "NATS_STREAM=MESSAGES")?;
+    writeln!(output)?;
     writeln!(output, "# Logging")?;
     writeln!(output, "RUST_LOG=info")?;
 
@@ -156,31 +174,36 @@ fn generate_dockerfile(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     let dockerfile_path = output_dir.join("Dockerfile");
     let mut file = std::fs::File::create(&dockerfile_path)?;
 
-    writeln!(file, "# Multi-stage Dockerfile for Rust ingestion API (Alpine + Security Hardened)")?;
-    writeln!(file, "FROM rust:alpine as builder")?;
+    writeln!(file, "# Multi-stage Dockerfile with cargo-chef for dependency caching")?;
     writeln!(file)?;
-    writeln!(file, "# Install build dependencies for musl")?;
-    writeln!(file, "RUN apk add --no-cache \\")?;
-    writeln!(file, "    musl-dev \\")?;
-    writeln!(file, "    pkgconfig \\")?;
-    writeln!(file, "    openssl-dev \\")?;
-    writeln!(file, "    postgresql-dev")?;
-    writeln!(file)?;
-    writeln!(file, "# Use dynamic linking for PostgreSQL (musl static linking doesn't support libpq)")?;
-    writeln!(file, "ENV RUSTFLAGS=\"-C target-feature=-crt-static\"")?;
-    writeln!(file)?;
+    writeln!(file, "# Stage 1: Chef - prepare recipe for dependencies")?;
+    writeln!(file, "FROM rust:alpine as chef")?;
+    writeln!(file, "RUN apk add --no-cache musl-dev pkgconfig openssl-dev postgresql-dev")?;
+    writeln!(file, "RUN cargo install cargo-chef")?;
     writeln!(file, "WORKDIR /build")?;
     writeln!(file)?;
-    writeln!(file, "# Copy manifests")?;
+    writeln!(file, "# Stage 2: Planner - analyze dependencies")?;
+    writeln!(file, "FROM chef as planner")?;
     writeln!(file, "COPY Cargo.toml Cargo.lock* ./")?;
-    writeln!(file)?;
-    writeln!(file, "# Copy source")?;
     writeln!(file, "COPY src ./src")?;
+    writeln!(file, "RUN cargo chef prepare --recipe-path recipe.json")?;
     writeln!(file)?;
-    writeln!(file, "# Build release binary with musl target")?;
+    writeln!(file, "# Stage 3: Builder - build dependencies (CACHED!) then app")?;
+    writeln!(file, "FROM chef as builder")?;
+    writeln!(file)?;
+    writeln!(file, "# Use dynamic linking for PostgreSQL")?;
+    writeln!(file, "ENV RUSTFLAGS=\"-C target-feature=-crt-static\"")?;
+    writeln!(file)?;
+    writeln!(file, "# Build dependencies - this layer is cached until Cargo.toml changes")?;
+    writeln!(file, "COPY --from=planner /build/recipe.json recipe.json")?;
+    writeln!(file, "RUN cargo chef cook --release --recipe-path recipe.json")?;
+    writeln!(file)?;
+    writeln!(file, "# Build application - only this runs when source code changes")?;
+    writeln!(file, "COPY Cargo.toml Cargo.lock* ./")?;
+    writeln!(file, "COPY src ./src")?;
     writeln!(file, "RUN cargo build --release")?;
     writeln!(file)?;
-    writeln!(file, "# Runtime stage - minimal Alpine")?;
+    writeln!(file, "# Stage 4: Runtime - minimal Alpine")?;
     writeln!(file, "FROM alpine:3.19")?;
     writeln!(file)?;
     writeln!(file, "# Install runtime dependencies")?;
@@ -195,7 +218,7 @@ fn generate_dockerfile(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     writeln!(file)?;
     writeln!(file, "WORKDIR /app")?;
     writeln!(file)?;
-    writeln!(file, "# Copy binary from builder and set ownership")?;
+    writeln!(file, "# Copy binary from builder")?;
     writeln!(file, "COPY --from=builder --chown=appuser:appuser /build/target/release/ingestion-server /app/")?;
     writeln!(file)?;
     writeln!(file, "# Switch to non-root user")?;
@@ -204,8 +227,105 @@ fn generate_dockerfile(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     writeln!(file, "# Expose default port")?;
     writeln!(file, "EXPOSE 8080")?;
     writeln!(file)?;
-    writeln!(file, "# Run the binary")?;
     writeln!(file, "CMD [\"/app/ingestion-server\"]")?;
+
+    Ok(())
+}
+
+fn generate_docker_compose_nats(output_dir: &Path, config: &IngestionServerConfig) -> Result<(), Box<dyn Error>> {
+    use std::io::Write;
+
+    let compose_file = output_dir.join("docker-compose.nats.yml");
+    let mut output = std::fs::File::create(&compose_file)?;
+
+    writeln!(output, "# Docker Compose for NATS JetStream + Ingestion API")?;
+    writeln!(output, "# This includes:")?;
+    writeln!(output, "#  - NATS JetStream (message queue)")?;
+    writeln!(output, "#  - PostgreSQL (database)")?;
+    writeln!(output, "#  - Ingestion API (HTTP -> NATS publisher)")?;
+    writeln!(output, "#  - TODO: Worker (NATS -> Database consumer)")?;
+    writeln!(output)?;
+    writeln!(output, "services:")?;
+    writeln!(output, "  # NATS JetStream server")?;
+    writeln!(output, "  nats:")?;
+    writeln!(output, "    image: nats:latest")?;
+    writeln!(output, "    ports:")?;
+    writeln!(output, "      - \"4222:4222\"  # NATS client port")?;
+    writeln!(output, "      - \"8222:8222\"  # NATS monitoring port")?;
+    writeln!(output, "    command:")?;
+    writeln!(output, "      - \"-js\"             # Enable JetStream")?;
+    writeln!(output, "      - \"-m\"              # Enable monitoring")?;
+    writeln!(output, "      - \"8222\"")?;
+    writeln!(output, "    healthcheck:")?;
+    writeln!(output, "      test: [\"CMD-SHELL\", \"timeout 1 sh -c 'cat < /dev/null > /dev/tcp/127.0.0.1/4222' || exit 1\"]")?;
+    writeln!(output, "      interval: 5s")?;
+    writeln!(output, "      timeout: 3s")?;
+    writeln!(output, "      retries: 3")?;
+    writeln!(output, "      start_period: 5s")?;
+    writeln!(output)?;
+
+    writeln!(output, "  # PostgreSQL database")?;
+    writeln!(output, "  postgres:")?;
+    writeln!(output, "    image: postgres:16-alpine")?;
+    writeln!(output, "    environment:")?;
+    writeln!(output, "      POSTGRES_USER: nomnom")?;
+    writeln!(output, "      POSTGRES_PASSWORD: nomnom")?;
+    writeln!(output, "      POSTGRES_DB: nomnom")?;
+    writeln!(output, "    ports:")?;
+    writeln!(output, "      - \"5432:5432\"")?;
+    writeln!(output, "    volumes:")?;
+    writeln!(output, "      - postgres_data:/var/lib/postgresql/data")?;
+    writeln!(output, "    healthcheck:")?;
+    writeln!(output, "      test: [\"CMD-SHELL\", \"pg_isready -U nomnom\"]")?;
+    writeln!(output, "      interval: 5s")?;
+    writeln!(output, "      timeout: 3s")?;
+    writeln!(output, "      retries: 3")?;
+    writeln!(output)?;
+
+    writeln!(output, "  # Ingestion API (HTTP -> NATS publisher)")?;
+    writeln!(output, "  ingestion-api:")?;
+    writeln!(output, "    build: .")?;
+    writeln!(output, "    ports:")?;
+    writeln!(output, "      - \"{}:8080\"", config.port)?;
+    writeln!(output, "    environment:")?;
+
+    match config.database_type {
+        DatabaseType::PostgreSQL => {
+            writeln!(output, "      DATABASE_URL: postgresql://nomnom:nomnom@postgres:5432/nomnom")?;
+        }
+        DatabaseType::MySQL | DatabaseType::MariaDB => {
+            writeln!(output, "      DATABASE_URL: mysql://nomnom:nomnom@mysql:3306/nomnom")?;
+        }
+    }
+
+    writeln!(output, "      NATS_URL: nats://nats:4222")?;
+    writeln!(output, "      NATS_STREAM: MESSAGES")?;
+    writeln!(output, "      RUST_LOG: info")?;
+    writeln!(output, "    depends_on:")?;
+    writeln!(output, "      nats:")?;
+    writeln!(output, "        condition: service_healthy")?;
+    writeln!(output, "      postgres:")?;
+    writeln!(output, "        condition: service_healthy")?;
+    writeln!(output)?;
+
+    writeln!(output, "  # TODO: Worker service (NATS consumer -> Database writer)")?;
+    writeln!(output, "  # worker:")?;
+    writeln!(output, "  #   build:")?;
+    writeln!(output, "  #     context: ./worker")?;
+    writeln!(output, "  #   environment:")?;
+    writeln!(output, "  #     DATABASE_URL: postgresql://nomnom:nomnom@postgres:5432/nomnom")?;
+    writeln!(output, "  #     NATS_URL: nats://nats:4222")?;
+    writeln!(output, "  #     NATS_STREAM: MESSAGES")?;
+    writeln!(output, "  #     RUST_LOG: info")?;
+    writeln!(output, "  #   depends_on:")?;
+    writeln!(output, "  #     nats:")?;
+    writeln!(output, "  #       condition: service_healthy")?;
+    writeln!(output, "  #     postgres:")?;
+    writeln!(output, "  #       condition: service_healthy")?;
+    writeln!(output)?;
+
+    writeln!(output, "volumes:")?;
+    writeln!(output, "  postgres_data:")?;
 
     Ok(())
 }

@@ -22,6 +22,7 @@ pub fn generate_main_rs(
     writeln!(output, "    Router,")?;
     writeln!(output, "}};")?;
     writeln!(output, "use std::net::SocketAddr;")?;
+    writeln!(output, "use std::sync::Arc;")?;
     writeln!(output, "use tower_http::cors::CorsLayer;")?;
     writeln!(output, "use utoipa::OpenApi;")?;
     writeln!(output, "use utoipa_swagger_ui::SwaggerUi;\n")?;
@@ -30,9 +31,13 @@ pub fn generate_main_rs(
     writeln!(output, "mod models;")?;
     writeln!(output, "mod parsers;")?;
     writeln!(output, "mod database;")?;
-    writeln!(output, "mod error;\n")?;
+    writeln!(output, "mod error;")?;
+    writeln!(output, "mod nats_client;")?;
+    writeln!(output, "mod message_envelope;\n")?;
 
-    writeln!(output, "use database::create_pool;\n")?;
+    writeln!(output, "use database::create_pool;")?;
+    writeln!(output, "use nats_client::{{NatsClient, NatsConfig}};")?;
+    writeln!(output, "use handlers::AppState;\n")?;
 
     // Generate OpenAPI spec
     writeln!(output, "#[derive(OpenApi)]")?;
@@ -41,6 +46,7 @@ pub fn generate_main_rs(
     writeln!(output, "        handlers::ingest_message,")?;
     writeln!(output, "        handlers::ingest_batch,")?;
     writeln!(output, "        handlers::health_check,")?;
+    writeln!(output, "        handlers::check_status,")?;
     writeln!(output, "    ),")?;
     writeln!(output, "    components(schemas(")?;
     writeln!(output, "        models::IngestResponse,")?;
@@ -60,14 +66,26 @@ pub fn generate_main_rs(
     writeln!(output, "    dotenv::dotenv().ok();\n")?;
 
     writeln!(output, "    // Create database pool")?;
-    writeln!(output, "    let pool = create_pool()")?;
+    writeln!(output, "    let db_pool = create_pool()")?;
     writeln!(output, "        .expect(\"Failed to create database pool\");\n")?;
+
+    writeln!(output, "    // Connect to NATS JetStream")?;
+    writeln!(output, "    let nats_config = NatsConfig::default();")?;
+    writeln!(output, "    let nats = NatsClient::connect(nats_config).await")?;
+    writeln!(output, "        .expect(\"Failed to connect to NATS\");\n")?;
+
+    writeln!(output, "    // Create application state")?;
+    writeln!(output, "    let state = Arc::new(AppState {{")?;
+    writeln!(output, "        nats,")?;
+    writeln!(output, "        db_pool,")?;
+    writeln!(output, "    }});\n")?;
 
     writeln!(output, "    // Build router")?;
     writeln!(output, "    let app = Router::new()")?;
     writeln!(output, "        // Ingestion endpoints")?;
     writeln!(output, "        .route(\"/ingest/message\", post(handlers::ingest_message))")?;
     writeln!(output, "        .route(\"/ingest/batch\", post(handlers::ingest_batch))")?;
+    writeln!(output, "        .route(\"/ingest/status/:message_id\", get(handlers::check_status))")?;
     writeln!(output, "        // Utility endpoints")?;
     writeln!(output, "        .route(\"/health\", get(handlers::health_check))")?;
     writeln!(output, "        .route(\"/stats\", get(handlers::stats))")?;
@@ -76,7 +94,7 @@ pub fn generate_main_rs(
     writeln!(output, "            .url(\"/api-docs/openapi.json\", ApiDoc::openapi()))")?;
     writeln!(output, "        // Middleware")?;
     writeln!(output, "        .layer(CorsLayer::permissive())")?;
-    writeln!(output, "        .with_state(pool);\n")?;
+    writeln!(output, "        .with_state(state);\n")?;
 
     writeln!(output, "    // Run server")?;
     writeln!(output, "    let addr = SocketAddr::from(([0, 0, 0, 0], {}));", config.port)?;

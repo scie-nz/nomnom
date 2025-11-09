@@ -1,28 +1,27 @@
-/// Generate Cargo.toml for the ingestion server
+/// Generate Cargo.toml for the worker binary
 
-use super::{IngestionServerConfig, DatabaseType};
+use super::{WorkerConfig, DatabaseType};
 use std::path::Path;
 use std::error::Error;
 use std::io::Write;
 
 pub fn generate_cargo_toml(
     output_dir: &Path,
-    config: &IngestionServerConfig,
+    config: &WorkerConfig,
 ) -> Result<(), Box<dyn Error>> {
     let cargo_file = output_dir.join("Cargo.toml");
     let mut output = std::fs::File::create(&cargo_file)?;
 
     writeln!(output, "[package]")?;
-    writeln!(output, "name = \"{}\"", config.server_name)?;
+    writeln!(output, "name = \"{}\"", config.worker_name)?;
     writeln!(output, "version = \"0.1.0\"")?;
     writeln!(output, "edition = \"2021\"\n")?;
 
     writeln!(output, "[dependencies]")?;
-    writeln!(output, "# Web framework")?;
-    writeln!(output, "axum = \"0.7\"")?;
+    writeln!(output, "# Async runtime")?;
     writeln!(output, "tokio = {{ version = \"1\", features = [\"full\"] }}")?;
-    writeln!(output, "tower = \"0.4\"")?;
-    writeln!(output, "tower-http = {{ version = \"0.5\", features = [\"cors\", \"trace\"] }}\n")?;
+    writeln!(output, "futures = \"0.3\"")?;
+    writeln!(output)?;
 
     writeln!(output, "# Serialization")?;
     writeln!(output, "serde = {{ version = \"1\", features = [\"derive\"] }}")?;
@@ -47,19 +46,12 @@ pub fn generate_cargo_toml(
     writeln!(output, "# NATS JetStream (message queue)")?;
     writeln!(output, "async-nats = \"0.35\"\n")?;
 
-    writeln!(output, "# OpenAPI documentation")?;
-    writeln!(output, "utoipa = {{ version = \"4\", features = [\"axum_extras\", \"chrono\"] }}")?;
-    writeln!(output, "utoipa-swagger-ui = {{ version = \"6\", features = [\"axum\"] }}\n")?;
-
     writeln!(output, "# Observability")?;
     writeln!(output, "tracing = \"0.1\"")?;
     writeln!(output, "tracing-subscriber = {{ version = \"0.3\", features = [\"env-filter\"] }}\n")?;
 
     writeln!(output, "# Environment")?;
     writeln!(output, "dotenv = \"0.15\"\n")?;
-
-    writeln!(output, "[dev-dependencies]")?;
-    writeln!(output, "reqwest = \"0.11\"")?;
 
     Ok(())
 }

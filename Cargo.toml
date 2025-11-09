@@ -25,6 +25,19 @@ r2d2 = "0.8"
 # Optional Python bridge
 pyo3 = { version = "0.20", optional = true, features = ["abi3-py38"] }
 
+# NATS JetStream integration
+async-nats = "0.35"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP server for nats-api binary
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenv = "0.15"
+
 [dev-dependencies]
 tempfile = "3.8"
 
@@ -39,3 +52,7 @@ crate-type = ["lib"]
 [[bin]]
 name = "nomnom"
 path = "src/bin/nomnom.rs"
+
+[[bin]]
+name = "nats-api"
+path = "src/bin/nats-api.rs"

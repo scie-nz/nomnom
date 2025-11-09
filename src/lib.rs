@@ -68,6 +68,9 @@ pub mod codegen;
 // Diesel ORM runtime infrastructure
 pub mod diesel_runtime;
 
+// NATS JetStream integration
+pub mod nats;
+
 // Re-export key types
 pub use entity::{Entity, FieldValue, EntityError, Context, IntoOptionString};
 pub use transform_registry::{TransformRegistry, TransformError};
@@ -83,6 +86,9 @@ pub use codegen::{EntityDef, FieldDef, ComputedFrom};
 
 // Re-export diesel_runtime types
 pub use diesel_runtime::{Database, DatabaseConfig, GetOrCreate, BulkInsert};
+
+// Re-export nats types
+pub use nats::{MessageEnvelope, IngestionResponse, IngestionStatus, NatsClient, NatsConfig};
 
 #[cfg(feature = "python-bridge")]
 pub use diesel_runtime::PyDatabase;

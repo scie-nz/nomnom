@@ -109,6 +109,25 @@ enum Commands {
         #[arg(short, long, default_value = "ingestion-server")]
         name: String,
     },
+
+    /// Generate NATS worker binary (consumes from NATS JetStream)
+    GenerateWorker {
+        /// Path to entities directory
+        #[arg(short, long, default_value = "entities")]
+        entities: PathBuf,
+
+        /// Output directory for worker
+        #[arg(short, long, default_value = "worker")]
+        output: PathBuf,
+
+        /// Database type (postgresql, mysql, mariadb)
+        #[arg(short, long, default_value = "postgresql")]
+        database: String,
+
+        /// Worker name for Cargo.toml
+        #[arg(short, long, default_value = "worker")]
+        name: String,
+    },
 }
 
 fn main() {
@@ -132,6 +151,9 @@ fn main() {
         }
         Commands::GenerateIngestionServer { entities, output, database, port, name } => {
             generate_ingestion_server(entities, output, database, port, name)
+        }
+        Commands::GenerateWorker { entities, output, database, name } => {
+            generate_worker(entities, output, database, name)
         }
     };
 
@@ -851,6 +873,104 @@ fn generate_ingestion_server(
     println!();
     println!("  5. View API documentation:");
     println!("     http://localhost:{}/swagger-ui", port);
+
+    Ok(())
+}
+
+/// Generate NATS worker binary
+fn generate_worker(
+    entities_dir: PathBuf,
+    output: PathBuf,
+    database_str: String,
+    worker_name: String,
+) -> Result<(), String> {
+    println!("🚀 Generating NATS worker binary...\n");
+
+    // Validate entities directory
+    if !entities_dir.exists() {
+        return Err(format!("Entities directory not found: {}", entities_dir.display()));
+    }
+
+    // Load entities
+    println!("📋 Loading entities from {}...", entities_dir.display());
+    let entities = nomnom::codegen::load_entities(&entities_dir)
+        .map_err(|e| format!("Failed to load entities: {}", e))?;
+
+    println!("  ✓ Loaded {} entities", entities.len());
+
+    // Count persistent entities
+    let persistent_count = entities.iter()
+        .filter(|e| e.is_persistent() && !e.is_abstract && e.source_type.to_lowercase() != "reference")
+        .count();
+
+    if persistent_count == 0 {
+        return Err("No persistent entities found. Worker requires entities with database configuration.".to_string());
+    }
+
+    println!("  ✓ Found {} persistent entities for processing", persistent_count);
+
+    // List persistent entities
+    for entity in &entities {
+        if entity.is_persistent() && !entity.is_abstract && entity.source_type.to_lowercase() != "reference" {
+            println!("    - {} (table: {})",
+                entity.name,
+                entity.get_database_config()
+                    .map(|db| db.conformant_table.as_str())
+                    .unwrap_or("unknown"));
+        }
+    }
+    println!();
+
+    // Parse database type
+    let db_type = match database_str.to_lowercase().as_str() {
+        "postgresql" | "postgres" | "pg" => nomnom::codegen::worker::DatabaseType::PostgreSQL,
+        "mysql" => nomnom::codegen::worker::DatabaseType::MySQL,
+        "mariadb" => nomnom::codegen::worker::DatabaseType::MariaDB,
+        _ => {
+            return Err(format!(
+                "Unsupported database type: '{}'. Supported types: postgresql, mysql, mariadb",
+                database_str
+            ));
+        }
+    };
+
+    println!("🗄️  Database type: {}", db_type.as_str());
+    println!();
+
+    // Create worker config
+    let config = nomnom::codegen::worker::WorkerConfig {
+        database_type: db_type,
+        worker_name: worker_name.clone(),
+    };
+
+    // Generate worker
+    nomnom::codegen::worker::generate_all(
+        &entities,
+        &output,
+        &config,
+    ).map_err(|e| format!("Worker generation failed: {}", e))?;
+
+    println!("\n✨ Worker binary generated successfully!");
+    println!("📁 Output directory: {}", output.display());
+
+    println!("\n📖 Next steps:");
+    println!("  1. Configure database and NATS:");
+    println!("     cd {}", output.display());
+    println!("     cp .env.example .env");
+    println!("     # Edit .env with your credentials");
+    println!();
+    println!("  2. Build the worker:");
+    println!("     cargo build --release");
+    println!();
+    println!("  3. Run the worker:");
+    println!("     cargo run --release");
+    println!();
+    println!("  4. The worker will:");
+    println!("     - Connect to NATS JetStream");
+    println!("     - Consume messages from the queue");
+    println!("     - Parse and validate message bodies");
+    println!("     - Write to database");
+    println!("     - ACK/NAK messages");
 
     Ok(())
 }

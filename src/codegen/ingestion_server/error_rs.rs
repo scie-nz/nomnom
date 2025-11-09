@@ -21,6 +21,8 @@ pub fn generate_error_rs(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     writeln!(output, "pub enum AppError {{")?;
     writeln!(output, "    Database(diesel::result::Error),")?;
     writeln!(output, "    Pool(r2d2::Error),")?;
+    writeln!(output, "    ValidationError(String),")?;
+    writeln!(output, "    InternalError(String),")?;
     writeln!(output, "    InvalidFormat(String),")?;
     writeln!(output, "    InvalidField(String),")?;
     writeln!(output, "    EmptyMessage,")?;
@@ -38,6 +40,14 @@ pub fn generate_error_rs(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     writeln!(output, "            AppError::Pool(e) => (")?;
     writeln!(output, "                StatusCode::SERVICE_UNAVAILABLE,")?;
     writeln!(output, "                format!(\"Database pool error: {{}}\", e),")?;
+    writeln!(output, "            ),")?;
+    writeln!(output, "            AppError::ValidationError(msg) => (")?;
+    writeln!(output, "                StatusCode::BAD_REQUEST,")?;
+    writeln!(output, "                format!(\"Validation error: {{}}\", msg),")?;
+    writeln!(output, "            ),")?;
+    writeln!(output, "            AppError::InternalError(msg) => (")?;
+    writeln!(output, "                StatusCode::INTERNAL_SERVER_ERROR,")?;
+    writeln!(output, "                format!(\"Internal error: {{}}\", msg),")?;
     writeln!(output, "            ),")?;
     writeln!(output, "            AppError::InvalidFormat(msg) => (")?;
     writeln!(output, "                StatusCode::BAD_REQUEST,")?;

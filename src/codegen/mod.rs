@@ -13,6 +13,7 @@ pub mod plugins;
 pub mod diesel;
 pub mod dashboard;
 pub mod ingestion_server;
+pub mod worker;
 pub mod orchestration;
 pub mod transform_codegen;
 pub mod build_config;
