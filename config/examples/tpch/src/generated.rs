@@ -13,37 +13,6 @@ use regex::Regex;
 // Generated from nomnom.yaml transforms section
 // ============================================================================
 
-/// Extract an optional float field from a JSON object
-///
-/// # Arguments
-///
-/// * `obj` - &serde_json::Value
-/// * `field` - &str
-///
-/// # Returns
-///
-/// Result<Option<f64>, String>
-pub fn json_get_optional_float(obj: &serde_json::Value, field: &str) -> Result<Option<f64>, String> {
-    Ok(obj.get(field)
-        .and_then(|v| v.as_f64()))
-}
-
-/// Extract an optional string field from a JSON object
-///
-/// # Arguments
-///
-/// * `obj` - &serde_json::Value
-/// * `field` - &str
-///
-/// # Returns
-///
-/// Result<Option<String>, String>
-pub fn json_get_optional_string(obj: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
-    Ok(obj.get(field)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string()))
-}
-
 /// Extract an integer field from a JSON object
 ///
 /// # Arguments
@@ -91,6 +60,37 @@ pub fn json_get_float(obj: &serde_json::Value, field: &str) -> Result<f64, Strin
     obj.get(field)
         .and_then(|v| v.as_f64())
         .ok_or_else(|| format!("Missing or invalid float field '{}'", field))
+}
+
+/// Extract an optional string field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<Option<String>, String>
+pub fn json_get_optional_string(obj: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
+    Ok(obj.get(field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
+/// Extract an optional float field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<Option<f64>, String>
+pub fn json_get_optional_float(obj: &serde_json::Value, field: &str) -> Result<Option<f64>, String> {
+    Ok(obj.get(field)
+        .and_then(|v| v.as_f64()))
 }
 
 // ============================================================================

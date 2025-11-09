@@ -330,7 +330,9 @@ impl BuildConfig {
     }
 
     /// Convert to GenerationConfig for code generation
-    pub fn to_generation_config(&self) -> Result<super::GenerationConfig, String> {
+    ///
+    /// If source_root is provided, all output paths will be resolved relative to it.
+    pub fn to_generation_config_with_root(&self, source_root: Option<&str>) -> Result<super::GenerationConfig, String> {
         // If helpers are specified, load them from files
         // Otherwise, use empty string (functions should come from imported crates like hl7utils)
         let additional_rust_header = if let Some(helpers) = &self.helpers {
@@ -388,15 +390,29 @@ impl BuildConfig {
             }
         });
 
+        // Helper to resolve path relative to source_root if provided
+        let resolve_path = |path: &str| -> String {
+            if let Some(root) = source_root {
+                format!("{}/{}", root, path)
+            } else {
+                path.to_string()
+            }
+        };
+
+        // Helper for optional paths
+        let resolve_opt_path = |opt_path: &Option<String>| -> Option<String> {
+            opt_path.as_ref().map(|p| resolve_path(p))
+        };
+
         Ok(super::GenerationConfig {
             config_dir: self.paths.config_dir.clone(),
-            rust_output: self.paths.outputs.rust_entities.clone(),
-            pyo3_bindings_output: self.paths.outputs.pyo3_bindings.clone(),
-            diesel_schema_output: self.paths.outputs.diesel_schema.clone(),
-            diesel_models_output: self.paths.outputs.diesel_models.clone(),
-            diesel_operations_output: self.paths.outputs.diesel_operations.clone(),
-            diesel_pyo3_output: self.paths.outputs.diesel_pyo3.clone(),
-            python_mapping_output: self.paths.outputs.python_mapping.clone(),
+            rust_output: resolve_path(&self.paths.outputs.rust_entities),
+            pyo3_bindings_output: resolve_path(&self.paths.outputs.pyo3_bindings),
+            diesel_schema_output: resolve_opt_path(&self.paths.outputs.diesel_schema),
+            diesel_models_output: resolve_opt_path(&self.paths.outputs.diesel_models),
+            diesel_operations_output: resolve_opt_path(&self.paths.outputs.diesel_operations),
+            diesel_pyo3_output: resolve_opt_path(&self.paths.outputs.diesel_pyo3),
+            python_mapping_output: resolve_opt_path(&self.paths.outputs.python_mapping),
             python_module_name: self.project.module_name.clone(),
             transform_registry_type: self
                 .transforms
@@ -404,17 +420,25 @@ impl BuildConfig {
                 .and_then(|t| t.registry_type.clone())
                 .unwrap_or_else(|| "crate::transform_registry::TransformRegistry".to_string()),
             additional_rust_header: Some(additional_rust_header),
-            transform_registry_output: self.paths.outputs.transform_registry.clone(),
+            transform_registry_output: resolve_opt_path(&self.paths.outputs.transform_registry),
             python_transforms_module: self.transforms.as_ref().and_then(|t| t.python_module.clone()),
-            python_bindings_output: self.paths.outputs.python_bindings.clone(),
+            python_bindings_output: resolve_opt_path(&self.paths.outputs.python_bindings),
             transform_functions: self.transforms.as_ref().map(|t| t.functions.clone()),
-            lib_rs_output: self.paths.outputs.lib_rs.clone(),
+            lib_rs_output: resolve_opt_path(&self.paths.outputs.lib_rs),
             dependency_exports,
             python_dependency_imports,
-            python_rust_shim_output: self.paths.outputs.python_rust_shim.clone(),
-            python_package_init_output: self.paths.outputs.python_package_init.clone(),
+            python_rust_shim_output: resolve_opt_path(&self.paths.outputs.python_rust_shim),
+            python_package_init_output: resolve_opt_path(&self.paths.outputs.python_package_init),
             rust_transforms: self.transforms.as_ref().map(|t| t.rust.clone()),
         })
+    }
+
+    /// Convert to GenerationConfig for code generation (backward compatible)
+    ///
+    /// This is a convenience wrapper that calls `to_generation_config_with_root(None)`.
+    /// For new code, prefer using `to_generation_config_with_root` with the source_root parameter.
+    pub fn to_generation_config(&self) -> Result<super::GenerationConfig, String> {
+        self.to_generation_config_with_root(None)
     }
 
     /// Generate Cargo.toml content
@@ -487,10 +511,11 @@ sha2 = "0.10"
 regex = "1.10"
 
 # Diesel ORM with connection pooling
-diesel = {{ version = "2.3", features = ["postgres", "sqlite", "r2d2", "chrono"] }}
+diesel = {{ version = "2.3", features = ["postgres", "sqlite", "r2d2", "chrono", "numeric"] }}
 diesel_migrations = "2.1"
 r2d2 = "0.8"
 chrono = {{ version = "0.4", features = ["serde"] }}
+bigdecimal = {{ version = "0.4", features = ["serde"] }}
 
 # Nomnom entity framework (runtime with python-bridge feature)
 nomnom = {{ path = "{}", features = ["python-bridge"] }}

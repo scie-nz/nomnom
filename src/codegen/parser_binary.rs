@@ -50,18 +50,27 @@ pub fn generate_parser_binary(
         .filter(|e| e.is_persistent() && !e.is_abstract)
         .collect();
 
+    // Check if database support is needed (any persistent entities exist)
+    let has_database_support = !permanent_entities.is_empty();
+
     // 4. Generate code sections
     let mut code = String::new();
     code.push_str(&generate_header());
-    code.push_str(&generate_imports());
+    code.push_str(&generate_imports(has_database_support));
     code.push_str(&generate_lineage_code());
     code.push_str(&generate_entity_to_fields_helper());
-    code.push_str(&generate_cli_struct());
+    code.push_str(&generate_cli_struct(has_database_support));
     code.push_str(&generate_parse_results_struct(&extraction_order));
-    code.push_str(&generate_main_function(root_entity));
+    if has_database_support {
+        code.push_str(&generate_execution_stats_struct(&extraction_order));
+    }
+    code.push_str(&generate_main_function(root_entity, has_database_support, &extraction_order));
     code.push_str(&generate_extraction_function(root_entity, &extraction_order));
     code.push_str(&generate_json_output_function(&extraction_order));
     code.push_str(&generate_sql_output_function(&permanent_entities));
+    if has_database_support {
+        code.push_str(&generate_execute_to_database_function(&extraction_order, &permanent_entities));
+    }
     code.push_str(&generate_sql_helpers());
 
     Ok(code)
@@ -182,7 +191,7 @@ fn generate_header() -> String {
 }
 
 /// Generate imports
-fn generate_imports() -> String {
+fn generate_imports(has_database_support: bool) -> String {
     let mut code = String::new();
 
     // Basic imports
@@ -198,6 +207,15 @@ fn generate_imports() -> String {
     code.push_str("// Import from the library crate (lib name is _rust)\n");
     code.push_str("use _rust::generated::*;\n");
     code.push_str("\n");
+
+    // Database imports for --execute-db mode
+    if has_database_support {
+        code.push_str("// Database imports for --execute-db mode\n");
+        code.push_str("use _rust::db::{Database, DatabaseConfig, Pool, operations::GetOrCreate};\n");
+        code.push_str("use _rust::models::*;\n");
+        code.push_str("\n");
+    }
+
     code.push_str("// Note: Transforms are now injected directly into generated.rs\n");
     code.push_str("// No registry needed - entity constructors call transform functions directly\n");
     code.push_str("\n");
@@ -206,8 +224,10 @@ fn generate_imports() -> String {
 }
 
 /// Generate CLI argument parser
-fn generate_cli_struct() -> String {
-    r#"/// CLI arguments for parser binary
+fn generate_cli_struct(has_database_support: bool) -> String {
+    let mut code = String::new();
+
+    code.push_str(r#"/// CLI arguments for parser binary
 #[derive(Parser, Debug)]
 #[command(name = "parser")]
 #[command(about = "Parse message files and output entities in JSON/SQL format", long_about = None)]
@@ -235,9 +255,22 @@ struct Cli {
     /// Lineage tree format: compact (default) or detailed
     #[arg(long, default_value = "compact")]
     lineage_format: String,
-}
+"#);
 
-"#.to_string()
+    if has_database_support {
+        code.push_str(r#"
+    /// Execute statements directly against database (requires DATABASE_URL env var)
+    #[arg(long)]
+    execute_db: bool,
+
+    /// Show verbose output (detailed execution logs)
+    #[arg(long, short)]
+    verbose: bool,
+"#);
+    }
+
+    code.push_str("}\n\n");
+    code
 }
 
 /// Generate ParseResults struct to hold all extracted entities
@@ -274,93 +307,206 @@ fn generate_parse_results_struct(extraction_order: &[EntityDef]) -> String {
     code
 }
 
+/// Generate ExecutionStats struct for database operations
+fn generate_execution_stats_struct(extraction_order: &[EntityDef]) -> String {
+    let mut code = String::new();
+
+    code.push_str("/// Statistics from database execution\n");
+    code.push_str("#[derive(Debug, Default)]\n");
+    code.push_str("struct ExecutionStats {\n");
+
+    // Generate fields for each persistent, non-abstract, non-reference entity
+    for entity in extraction_order {
+        // Skip non-persistent or abstract entities
+        if !entity.is_persistent() || entity.is_abstract {
+            continue;
+        }
+
+        // Skip reference entities
+        if entity.source_type.to_lowercase() == "reference" {
+            continue;
+        }
+
+        let field_name = to_snake_case(&entity.name);
+        code.push_str(&format!("    {}_created: usize,\n", field_name));
+        code.push_str(&format!("    {}_found: usize,\n", field_name));
+    }
+
+    code.push_str("}\n\n");
+    code
+}
+
 /// Generate main function
-fn generate_main_function(root_entity: &EntityDef) -> String {
+fn generate_main_function(root_entity: &EntityDef, has_database_support: bool, extraction_order: &[EntityDef]) -> String {
     let root_snake = to_snake_case(&root_entity.name);
     let root_core = format!("{}Core", root_entity.name);
 
-    format!(r#"fn main() -> Result<(), Box<dyn Error>> {{
-    let cli = Cli::parse();
+    let mut code = String::new();
 
-    // Determine output mode
-    let show_json = !cli.sql_only;
-    let show_sql = !cli.json_only;
+    // Main function signature and CLI parsing
+    code.push_str("fn main() -> Result<(), Box<dyn Error>> {\n");
+    code.push_str("    let cli = Cli::parse();\n\n");
 
-    // If no flags specified, --dry-run is default (show both)
-    let show_json = if cli.dry_run {{ true }} else {{ show_json }};
-    let show_sql = if cli.dry_run {{ true }} else {{ show_sql }};
+    // Output mode determination
+    if has_database_support {
+        code.push_str("    // Determine output mode\n");
+        code.push_str("    let show_json = !cli.sql_only && !cli.execute_db;\n");
+        code.push_str("    let show_sql = !cli.json_only && !cli.execute_db;\n\n");
+    } else {
+        code.push_str("    // Determine output mode\n");
+        code.push_str("    let show_json = !cli.sql_only;\n");
+        code.push_str("    let show_sql = !cli.json_only;\n\n");
+    }
 
-    // Parse lineage format
-    let lineage_format = if cli.lineage_format == "detailed" {{
-        LineageFormat::Detailed
-    }} else {{
-        LineageFormat::Compact
-    }};
+    code.push_str("    // If no flags specified, --dry-run is default (show both)\n");
+    code.push_str("    let show_json = if cli.dry_run { true } else { show_json };\n");
+    code.push_str("    let show_sql = if cli.dry_run { true } else { show_sql };\n\n");
 
-    // Read file paths from stdin (one per line)
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {{
-        let file_path = line?;
+    code.push_str("    // Parse lineage format\n");
+    code.push_str("    let lineage_format = if cli.lineage_format == \"detailed\" {\n");
+    code.push_str("        LineageFormat::Detailed\n");
+    code.push_str("    } else {\n");
+    code.push_str("        LineageFormat::Compact\n");
+    code.push_str("    };\n\n");
 
-        // Process file
-        match process_file(&file_path, show_json, show_sql, cli.lineage, cli.show_lineage, lineage_format) {{
-            Ok(_) => {{}},
-            Err(e) => {{
-                eprintln!("Error processing file '{{}}': {{}}", file_path, e);
-                // Continue to next file
-            }}
-        }}
-    }}
+    // Database initialization if supported
+    if has_database_support {
+        code.push_str("    // Initialize database connection pool if --execute-db is set\n");
+        code.push_str("    let db_pool: Option<Pool> = if cli.execute_db {\n");
+        code.push_str("        let db_url = std::env::var(\"DATABASE_URL\")\n");
+        code.push_str("            .expect(\"DATABASE_URL must be set for --execute-db mode\");\n\n");
+        code.push_str("        if cli.verbose {\n");
+        code.push_str("            eprintln!(\"Connecting to database: {}\", db_url);\n");
+        code.push_str("        }\n\n");
+        code.push_str("        let database = Database::new(&db_url)\n");
+        code.push_str("            .expect(\"Failed to connect to database\");\n\n");
+        code.push_str("        if cli.verbose {\n");
+        code.push_str("            eprintln!(\"Database connection established\");\n");
+        code.push_str("        }\n\n");
+        code.push_str("        Some(database.pool().clone())\n");
+        code.push_str("    } else {\n");
+        code.push_str("        None\n");
+        code.push_str("    };\n\n");
+    }
 
-    Ok(())
-}}
+    // Process files from stdin
+    code.push_str("    // Read file paths from stdin (one per line)\n");
+    code.push_str("    let stdin = io::stdin();\n");
+    code.push_str("    for line in stdin.lock().lines() {\n");
+    code.push_str("        let file_path = line?;\n\n");
+    code.push_str("        // Process file\n");
 
-/// Process a single file path
-fn process_file(
-    file_path: &str,
-    show_json: bool,
-    show_sql: bool,
-    enable_lineage: bool,
-    show_lineage: bool,
-    lineage_format: LineageFormat,
-) -> Result<(), Box<dyn Error>> {{
-    // Create root entity from file path (no registry - transforms are injected)
-    let {root_snake} = {root_core}::from_string(file_path)?;
+    if has_database_support {
+        code.push_str("        match process_file(\n");
+        code.push_str("            &file_path,\n");
+        code.push_str("            show_json,\n");
+        code.push_str("            show_sql,\n");
+        code.push_str("            cli.lineage,\n");
+        code.push_str("            cli.show_lineage,\n");
+        code.push_str("            lineage_format,\n");
+        code.push_str("            db_pool.as_ref(),\n");
+        code.push_str("            cli.verbose,\n");
+        code.push_str("        ) {\n");
+    } else {
+        code.push_str("        match process_file(&file_path, show_json, show_sql, cli.lineage, cli.show_lineage, lineage_format) {\n");
+    }
 
-    // Initialize lineage tracker if needed
-    let mut lineage_tracker = if enable_lineage || show_lineage {{
-        Some(LineageTracker::new())
-    }} else {{
-        None
-    }};
+    code.push_str("            Ok(_) => {},\n");
+    code.push_str("            Err(e) => {\n");
+    code.push_str("                eprintln!(\"Error processing file '{}': {}\", file_path, e);\n");
+    code.push_str("                // Continue to next file\n");
+    code.push_str("            }\n");
+    code.push_str("        }\n");
+    code.push_str("    }\n\n");
+    code.push_str("    Ok(())\n");
+    code.push_str("}\n\n");
 
-    // Extract all entities (pass ownership of root)
-    let (results, entity_shas) = extract_all_entities({root_snake}, lineage_tracker.as_mut())?;
+    // process_file function
+    code.push_str("/// Process a single file path\n");
+    code.push_str("fn process_file(\n");
+    code.push_str("    file_path: &str,\n");
+    code.push_str("    show_json: bool,\n");
+    code.push_str("    show_sql: bool,\n");
+    code.push_str("    enable_lineage: bool,\n");
+    code.push_str("    show_lineage: bool,\n");
+    code.push_str("    lineage_format: LineageFormat,\n");
+    if has_database_support {
+        code.push_str("    db_pool: Option<&Pool>,\n");
+        code.push_str("    verbose: bool,\n");
+    }
+    code.push_str(") -> Result<(), Box<dyn Error>> {\n");
+    code.push_str(&format!("    // Create root entity from file path (no registry - transforms are injected)\n"));
+    code.push_str(&format!("    let {} = {}::from_string(file_path)?;\n\n", root_snake, root_core));
 
-    // Show lineage tree if requested
-    if show_lineage {{
-        if let Some(ref tracker) = lineage_tracker {{
-            let tree = tracker.render_tree(lineage_format);
-            eprintln!("{{}}\\n", tree);
-        }}
-        // When showing lineage, suppress JSON/SQL output
-        return Ok(());
-    }}
+    code.push_str("    // Initialize lineage tracker if needed\n");
+    code.push_str("    let mut lineage_tracker = if enable_lineage || show_lineage {\n");
+    code.push_str("        Some(LineageTracker::new())\n");
+    code.push_str("    } else {\n");
+    code.push_str("        None\n");
+    code.push_str("    };\n\n");
 
-    // Output JSON if requested
-    if show_json {{
-        output_json_entities(&results, lineage_tracker.as_ref(), &entity_shas, enable_lineage)?;
-    }}
+    code.push_str("    // Extract all entities (pass ownership of root)\n");
+    code.push_str(&format!("    let (results, entity_shas) = extract_all_entities({}, lineage_tracker.as_mut())?;\n\n", root_snake));
 
-    // Output SQL if requested
-    if show_sql {{
-        output_sql_statements(&results)?;
-    }}
+    code.push_str("    // Show lineage tree if requested\n");
+    code.push_str("    if show_lineage {\n");
+    code.push_str("        if let Some(ref tracker) = lineage_tracker {\n");
+    code.push_str("            let tree = tracker.render_tree(lineage_format);\n");
+    code.push_str("            eprintln!(\"{}\\\\n\", tree);\n");
+    code.push_str("        }\n");
+    code.push_str("        // When showing lineage, suppress JSON/SQL output\n");
+    code.push_str("        return Ok(());\n");
+    code.push_str("    }\n\n");
 
-    Ok(())
-}}
+    // Database execution if supported
+    if has_database_support {
+        code.push_str("    // Execute to database if requested\n");
+        code.push_str("    if let Some(pool) = db_pool {\n");
+        code.push_str("        let stats = execute_to_database(&results, pool, verbose)?;\n\n");
+        code.push_str("        if verbose {\n");
+        code.push_str("            eprintln!(\"✓ Database execution complete:\");\n");
 
-"#)
+        // Generate verbose output for each persistent, non-abstract, non-reference entity
+        for entity in extraction_order {
+            // Skip non-persistent or abstract entities
+            if !entity.is_persistent() || entity.is_abstract {
+                continue;
+            }
+
+            // Skip reference entities
+            if entity.source_type.to_lowercase() == "reference" {
+                continue;
+            }
+
+            let var_name = to_snake_case(&entity.name);
+            code.push_str(&format!(
+                "            eprintln!(\"  - {}: {{}} created, {{}} found\", stats.{}_created, stats.{}_found);\n",
+                entity.name, var_name, var_name
+            ));
+        }
+
+        code.push_str("        } else {\n");
+        code.push_str("            eprintln!(\"✓ Database execution successful\");\n");
+        code.push_str("        }\n\n");
+        code.push_str("        // When executing to database, suppress JSON/SQL output\n");
+        code.push_str("        return Ok(());\n");
+        code.push_str("    }\n\n");
+    }
+
+    code.push_str("    // Output JSON if requested\n");
+    code.push_str("    if show_json {\n");
+    code.push_str("        output_json_entities(&results, lineage_tracker.as_ref(), &entity_shas, enable_lineage)?;\n");
+    code.push_str("    }\n\n");
+
+    code.push_str("    // Output SQL if requested\n");
+    code.push_str("    if show_sql {\n");
+    code.push_str("        output_sql_statements(&results)?;\n");
+    code.push_str("    }\n\n");
+
+    code.push_str("    Ok(())\n");
+    code.push_str("}\n\n");
+
+    code
 }
 
 /// Generate entity extraction function
@@ -834,6 +980,164 @@ fn generate_entity_sql_function(entity: &EntityDef) -> String {
     code.push_str("    println!();\n");
 
     code.push_str("    Ok(())\n");
+    code.push_str("}\n\n");
+
+    code
+}
+
+/// Generate database execution function
+fn generate_execute_to_database_function(
+    extraction_order: &[EntityDef],
+    permanent_entities: &[&EntityDef],
+) -> String {
+    let mut code = String::new();
+
+    code.push_str("/// Execute entities to database using Diesel\n");
+    code.push_str("fn execute_to_database(\n");
+    code.push_str("    results: &ParseResults,\n");
+    code.push_str("    pool: &Pool,\n");
+    code.push_str("    verbose: bool,\n");
+    code.push_str(") -> Result<ExecutionStats, Box<dyn Error>> {\n");
+    code.push_str("    use diesel::prelude::*;\n\n");
+    code.push_str("    let mut stats = ExecutionStats::default();\n");
+    code.push_str("    let mut conn = pool.get()\n");
+    code.push_str("        .map_err(|e| format!(\"Failed to get database connection: {}\", e))?;\n\n");
+
+    code.push_str("    // Execute in transaction for atomicity\n");
+    code.push_str("    conn.transaction::<_, Box<dyn Error>, _>(|conn| {\n");
+
+    // Process each persistent entity
+    for entity in extraction_order {
+        // Skip non-persistent or abstract entities
+        if !entity.is_persistent() || entity.is_abstract {
+            continue;
+        }
+
+        // Skip reference entities
+        if entity.source_type.to_lowercase() == "reference" {
+            continue;
+        }
+
+        let var_name = to_snake_case(&entity.name);
+        let type_name = format!("{}Core", entity.name);
+        let new_type_name = format!("New{}", entity.name);
+        let model_type_name = entity.name.clone();
+
+        let db_config = entity.get_database_config()
+            .expect("Persistent entity must have database config");
+        let table_name = &db_config.conformant_table;
+        let unicity_fields = &db_config.unicity_fields;
+
+        let is_repeated = entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false)
+            || entity.repeated_for.is_some();
+
+        if is_repeated {
+            // Process repeated entity (Vec<EntityCore>)
+            code.push_str(&format!("        // Process {} (repeated)\n", entity.name));
+            code.push_str("        if verbose {\n");
+            code.push_str(&format!("            eprintln!(\"Inserting {{}} line items...\", results.{}.len());\n", var_name));
+            code.push_str("        }\n\n");
+
+            code.push_str(&format!("        for (idx, item_core) in results.{}.iter().enumerate() {{\n", var_name));
+            code.push_str(&format!("            let new_item: {} = item_core.into();\n\n", new_type_name));
+
+            code.push_str("            if verbose {\n");
+            // Create verbose message with unicity fields
+            let verbose_fields: Vec<String> = unicity_fields.iter()
+                .map(|f| format!("{}={{:?}}", f))
+                .collect();
+            code.push_str(&format!("                eprintln!(\"  - Item {{}}: {}\",\n", verbose_fields.join(", ")));
+            code.push_str("                    idx + 1");
+            for field in unicity_fields {
+                code.push_str(&format!(", new_item.{}", field));
+            }
+            code.push_str(");\n");
+            code.push_str("            }\n\n");
+
+            // Check if exists
+            code.push_str(&format!("            use _rust::schema::{}::dsl::*;\n", table_name));
+            code.push_str(&format!("            let existing = {}\n", table_name));
+            for (i, field) in unicity_fields.iter().enumerate() {
+                if i == 0 {
+                    code.push_str(&format!("                .filter({}.eq(&new_item.{}))\n", field, field));
+                } else {
+                    code.push_str(&format!("                .filter({}.eq(&new_item.{}))\n", field, field));
+                }
+            }
+            code.push_str(&format!("                .first::<{}>(conn)\n", model_type_name));
+            code.push_str("                .optional()?;\n\n");
+
+            code.push_str("            match existing {\n");
+            code.push_str("                Some(_) => {\n");
+            code.push_str("                    if verbose {\n");
+            code.push_str("                        eprintln!(\"    ✓ Found existing\");\n");
+            code.push_str("                    }\n");
+            code.push_str(&format!("                    stats.{}_found += 1;\n", var_name));
+            code.push_str("                }\n");
+            code.push_str("                None => {\n");
+
+            // Insert new record
+            code.push_str("                    // Insert new record\n");
+            code.push_str(&format!("                    diesel::insert_into({})\n", table_name));
+            code.push_str("                        .values(new_item)\n");
+            code.push_str("                        .execute(conn)?;\n\n");
+
+            code.push_str("                    if verbose {\n");
+            code.push_str("                        eprintln!(\"    ✓ Created new\");\n");
+            code.push_str("                    }\n");
+            code.push_str(&format!("                    stats.{}_created += 1;\n", var_name));
+            code.push_str("                }\n");
+            code.push_str("            }\n");
+            code.push_str("        }\n\n");
+        } else {
+            // Process singleton entity
+            code.push_str(&format!("        // Process {} (singleton)\n", entity.name));
+            code.push_str("        if verbose {\n");
+            code.push_str(&format!("            eprintln!(\"Inserting {}: {{:?}}\", results.{}.{});\n",
+                entity.name, var_name, unicity_fields[0]));
+            code.push_str("        }\n\n");
+
+            code.push_str(&format!("        let new_item: {} = (&results.{}).into();\n\n", new_type_name, var_name));
+
+            // Check if exists
+            code.push_str(&format!("        use _rust::schema::{}::dsl::*;\n", table_name));
+            code.push_str(&format!("        let existing = {}\n", table_name));
+            for (i, field) in unicity_fields.iter().enumerate() {
+                if i == 0 {
+                    code.push_str(&format!("            .filter({}.eq(&new_item.{}))\n", field, field));
+                } else {
+                    code.push_str(&format!("            .filter({}.eq(&new_item.{}))\n", field, field));
+                }
+            }
+            code.push_str(&format!("            .first::<{}>(conn)\n", model_type_name));
+            code.push_str("            .optional()?;\n\n");
+
+            code.push_str("        match existing {\n");
+            code.push_str("            Some(_) => {\n");
+            code.push_str("                if verbose {\n");
+            code.push_str("                    eprintln!(\"  ✓ Found existing\");\n");
+            code.push_str("                }\n");
+            code.push_str(&format!("                stats.{}_found += 1;\n", var_name));
+            code.push_str("            }\n");
+            code.push_str("            None => {\n");
+
+            // Insert new record
+            code.push_str("                // Insert new record\n");
+            code.push_str(&format!("                diesel::insert_into({})\n", table_name));
+            code.push_str("                    .values(new_item)\n");
+            code.push_str("                    .execute(conn)?;\n\n");
+
+            code.push_str("                if verbose {\n");
+            code.push_str("                    eprintln!(\"  ✓ Created new\");\n");
+            code.push_str("                }\n");
+            code.push_str(&format!("                stats.{}_created += 1;\n", var_name));
+            code.push_str("            }\n");
+            code.push_str("        }\n\n");
+        }
+    }
+
+    code.push_str("        Ok(stats)\n");
+    code.push_str("    })\n");
     code.push_str("}\n\n");
 
     code

@@ -11,6 +11,8 @@ pub mod yaml_loader;
 pub mod utils;
 pub mod plugins;
 pub mod diesel;
+pub mod dashboard;
+pub mod ingestion_server;
 pub mod orchestration;
 pub mod transform_codegen;
 pub mod build_config;

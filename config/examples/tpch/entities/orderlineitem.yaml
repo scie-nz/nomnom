@@ -5,6 +5,7 @@
 entity:
   name: OrderLineItem
   source_type: derived  # Derived from Order parent
+  prefix: "L"  # Message prefix for ingestion server (different from Order's "O")
   repeated_for:
     entity: Order
     field: line_items  # Extract from line_items array in Order

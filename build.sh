@@ -19,7 +19,11 @@ echo ""
 # Detect OS and set PostgreSQL library path
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS
-    if [ -d "/opt/homebrew/opt/postgresql/lib" ]; then
+    if [ -d "/opt/homebrew/opt/postgresql@17/lib" ]; then
+        # Apple Silicon (M1/M2) - PostgreSQL 17
+        PG_LIB_PATH="/opt/homebrew/opt/postgresql@17/lib"
+        echo -e "${GREEN}✓${NC} Detected macOS (Apple Silicon - PostgreSQL 17)"
+    elif [ -d "/opt/homebrew/opt/postgresql/lib" ]; then
         # Apple Silicon (M1/M2)
         PG_LIB_PATH="/opt/homebrew/opt/postgresql/lib"
         echo -e "${GREEN}✓${NC} Detected macOS (Apple Silicon)"

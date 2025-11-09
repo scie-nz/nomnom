@@ -21,11 +21,15 @@ if [ ! -f "$PARSER_BIN" ]; then
     exit 1
 fi
 
-# Check for --with-db flag
+# Check for database mode flags
 WITH_DB=false
+EXECUTE_DB=false
 if [[ "$1" == "--with-db" ]]; then
     WITH_DB=true
     shift  # Remove --with-db from arguments
+elif [[ "$1" == "--execute-db" ]]; then
+    EXECUTE_DB=true
+    shift  # Remove --execute-db from arguments
 fi
 
 # Parse remaining command line arguments (forward all flags to parser)
@@ -72,6 +76,44 @@ if [ "$WITH_DB" = true ]; then
         echo -e "${GREEN}✓ Data loaded into database${NC}"
     else
         echo -e "${YELLOW}⚠ Some inserts may have failed (duplicate keys are OK)${NC}"
+    fi
+    echo
+
+    # Query database to verify data
+    echo -e "${BLUE}Verifying data in database:${NC}"
+    docker compose exec -T postgres psql -U tpch_user -d tpch_db -c "SELECT COUNT(*) as order_count FROM orders;"
+    docker compose exec -T postgres psql -U tpch_user -d tpch_db -c "SELECT COUNT(*) as line_item_count FROM order_line_items;"
+    echo
+
+    echo -e "${GREEN}✓ Database test complete${NC}"
+    echo -e "${BLUE}To query the database: ./db.sh shell${NC}"
+    exit 0
+fi
+
+# If --execute-db flag is set, test direct database execution via Diesel
+if [ "$EXECUTE_DB" = true ]; then
+    echo -e "${YELLOW}Direct database execution mode enabled${NC}"
+    echo
+
+    # Check if database is running
+    if ! docker compose ps | grep -q "Up"; then
+        echo -e "${YELLOW}Database not running. Starting database...${NC}"
+        ./db.sh start
+        echo
+    fi
+
+    # Load environment variables (filter out comments and empty lines)
+    export $(cat .env.test | grep -v '^#' | grep -v '^$' | xargs)
+
+    # Generate test data and pipe directly to parser with --execute-db
+    echo -e "${BLUE}Parsing and executing to database via Diesel...${NC}"
+    python3 generate_test_data.py --count 5 --seed 42 | "$PARSER_BIN" --execute-db --verbose
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ Direct database execution successful${NC}"
+    else
+        echo -e "${YELLOW}⚠ Database execution failed${NC}"
+        exit 1
     fi
     echo
 

@@ -64,6 +64,11 @@ impl Database {
         diesel::sql_query("SELECT 1").execute(&mut conn)?;
         Ok(())
     }
+
+    /// Get a reference to the connection pool
+    pub fn pool(&self) -> &Pool {
+        &self.pool
+    }
 }
 
 /// Database configuration options

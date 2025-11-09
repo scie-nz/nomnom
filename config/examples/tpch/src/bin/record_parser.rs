@@ -19,6 +19,10 @@ use std::path::Path;
 // Import from the library crate (lib name is _rust)
 use _rust::generated::*;
 
+// Database imports for --execute-db mode
+use _rust::db::{Database, DatabaseConfig, Pool, operations::GetOrCreate};
+use _rust::models::*;
+
 // Note: Transforms are now injected directly into generated.rs
 // No registry needed - entity constructors call transform functions directly
 
@@ -454,6 +458,14 @@ struct Cli {
     /// Lineage tree format: compact (default) or detailed
     #[arg(long, default_value = "compact")]
     lineage_format: String,
+
+    /// Execute statements directly against database (requires DATABASE_URL env var)
+    #[arg(long)]
+    execute_db: bool,
+
+    /// Show verbose output (detailed execution logs)
+    #[arg(long, short)]
+    verbose: bool,
 }
 
 /// Results from parsing a single file
@@ -463,12 +475,21 @@ struct ParseResults {
     order_line_item: Vec<OrderLineItemCore>,
 }
 
+/// Statistics from database execution
+#[derive(Debug, Default)]
+struct ExecutionStats {
+    order_created: usize,
+    order_found: usize,
+    order_line_item_created: usize,
+    order_line_item_found: usize,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     // Determine output mode
-    let show_json = !cli.sql_only;
-    let show_sql = !cli.json_only;
+    let show_json = !cli.sql_only && !cli.execute_db;
+    let show_sql = !cli.json_only && !cli.execute_db;
 
     // If no flags specified, --dry-run is default (show both)
     let show_json = if cli.dry_run { true } else { show_json };
@@ -481,13 +502,43 @@ fn main() -> Result<(), Box<dyn Error>> {
         LineageFormat::Compact
     };
 
+    // Initialize database connection pool if --execute-db is set
+    let db_pool: Option<Pool> = if cli.execute_db {
+        let db_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set for --execute-db mode");
+
+        if cli.verbose {
+            eprintln!("Connecting to database: {}", db_url);
+        }
+
+        let database = Database::new(&db_url)
+            .expect("Failed to connect to database");
+
+        if cli.verbose {
+            eprintln!("Database connection established");
+        }
+
+        Some(database.pool().clone())
+    } else {
+        None
+    };
+
     // Read file paths from stdin (one per line)
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let file_path = line?;
 
         // Process file
-        match process_file(&file_path, show_json, show_sql, cli.lineage, cli.show_lineage, lineage_format) {
+        match process_file(
+            &file_path,
+            show_json,
+            show_sql,
+            cli.lineage,
+            cli.show_lineage,
+            lineage_format,
+            db_pool.as_ref(),
+            cli.verbose,
+        ) {
             Ok(_) => {},
             Err(e) => {
                 eprintln!("Error processing file '{}': {}", file_path, e);
@@ -507,6 +558,8 @@ fn process_file(
     enable_lineage: bool,
     show_lineage: bool,
     lineage_format: LineageFormat,
+    db_pool: Option<&Pool>,
+    verbose: bool,
 ) -> Result<(), Box<dyn Error>> {
     // Create root entity from file path (no registry - transforms are injected)
     let order = OrderCore::from_string(file_path)?;
@@ -528,6 +581,22 @@ fn process_file(
             eprintln!("{}\\n", tree);
         }
         // When showing lineage, suppress JSON/SQL output
+        return Ok(());
+    }
+
+    // Execute to database if requested
+    if let Some(pool) = db_pool {
+        let stats = execute_to_database(&results, pool, verbose)?;
+
+        if verbose {
+            eprintln!("✓ Database execution complete:");
+            eprintln!("  - Order: {} created, {} found", stats.order_created, stats.order_found);
+            eprintln!("  - OrderLineItem: {} created, {} found", stats.order_line_item_created, stats.order_line_item_found);
+        } else {
+            eprintln!("✓ Database execution successful");
+        }
+
+        // When executing to database, suppress JSON/SQL output
         return Ok(());
     }
 
@@ -677,6 +746,7 @@ fn output_order_line_item_sql(entity: &OrderLineItemCore, index: Option<usize>) 
     print!(", ");
     print!("{}", sql_opt_string_option(&entity.receipt_date));
     println!(")");
+    println!(";");
     println!();
     Ok(())
 }
@@ -722,6 +792,7 @@ fn output_order_sql(entity: &OrderCore, index: Option<usize>) -> Result<(), Box<
     print!(", ");
     print!("{}", sql_opt_json_array(&entity.line_items));
     println!(")");
+    println!(";");
     println!();
     Ok(())
 }
@@ -763,6 +834,7 @@ fn output_customer_sql(entity: &CustomerCore, index: Option<usize>) -> Result<()
     print!(", ");
     print!("{}", sql_opt_string_option(&entity.comment));
     println!(")");
+    println!(";");
     println!();
     Ok(())
 }
@@ -806,8 +878,101 @@ fn output_product_sql(entity: &ProductCore, index: Option<usize>) -> Result<(), 
     print!(", ");
     print!("{}", sql_opt_string_option(&entity.comment));
     println!(")");
+    println!(";");
     println!();
     Ok(())
+}
+
+/// Execute entities to database using Diesel
+fn execute_to_database(
+    results: &ParseResults,
+    pool: &Pool,
+    verbose: bool,
+) -> Result<ExecutionStats, Box<dyn Error>> {
+    use diesel::prelude::*;
+
+    let mut stats = ExecutionStats::default();
+    let mut conn = pool.get()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+
+    // Execute in transaction for atomicity
+    conn.transaction::<_, Box<dyn Error>, _>(|conn| {
+        // Process Order (singleton)
+        if verbose {
+            eprintln!("Inserting Order: {:?}", results.order.order_key);
+        }
+
+        let new_item: NewOrder = (&results.order).into();
+
+        use _rust::schema::orders::dsl::*;
+        let existing = orders
+            .filter(order_key.eq(&new_item.order_key))
+            .first::<Order>(conn)
+            .optional()?;
+
+        match existing {
+            Some(_) => {
+                if verbose {
+                    eprintln!("  ✓ Found existing");
+                }
+                stats.order_found += 1;
+            }
+            None => {
+                // Insert new record
+                diesel::insert_into(orders)
+                    .values(new_item)
+                    .execute(conn)?;
+
+                if verbose {
+                    eprintln!("  ✓ Created new");
+                }
+                stats.order_created += 1;
+            }
+        }
+
+        // Process OrderLineItem (repeated)
+        if verbose {
+            eprintln!("Inserting {} line items...", results.order_line_item.len());
+        }
+
+        for (idx, item_core) in results.order_line_item.iter().enumerate() {
+            let new_item: NewOrderLineItem = item_core.into();
+
+            if verbose {
+                eprintln!("  - Item {}: order_key={:?}, line_number={:?}",
+                    idx + 1, new_item.order_key, new_item.line_number);
+            }
+
+            use _rust::schema::order_line_items::dsl::*;
+            let existing = order_line_items
+                .filter(order_key.eq(&new_item.order_key))
+                .filter(line_number.eq(&new_item.line_number))
+                .first::<OrderLineItem>(conn)
+                .optional()?;
+
+            match existing {
+                Some(_) => {
+                    if verbose {
+                        eprintln!("    ✓ Found existing");
+                    }
+                    stats.order_line_item_found += 1;
+                }
+                None => {
+                    // Insert new record
+                    diesel::insert_into(order_line_items)
+                        .values(new_item)
+                        .execute(conn)?;
+
+                    if verbose {
+                        eprintln!("    ✓ Created new");
+                    }
+                    stats.order_line_item_created += 1;
+                }
+            }
+        }
+
+        Ok(stats)
+    })
 }
 
 /// Format any value as SQL literal

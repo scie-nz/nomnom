@@ -67,6 +67,48 @@ enum Commands {
         #[arg(short, long)]
         test: bool,
     },
+
+    /// Generate real-time dashboard for database monitoring
+    GenerateDashboard {
+        /// Path to entities directory
+        #[arg(short, long, default_value = "entities")]
+        entities: PathBuf,
+
+        /// Output directory for dashboard
+        #[arg(short, long, default_value = "dashboard")]
+        output: PathBuf,
+
+        /// Database type (postgresql, mysql, mariadb)
+        #[arg(short, long, default_value = "postgresql")]
+        database: String,
+
+        /// Backend type (axum, fastapi)
+        #[arg(short, long, default_value = "axum")]
+        backend: String,
+    },
+
+    /// Generate Axum-based HTTP ingestion server
+    GenerateIngestionServer {
+        /// Path to entities directory
+        #[arg(short, long, default_value = "entities")]
+        entities: PathBuf,
+
+        /// Output directory for ingestion server
+        #[arg(short, long, default_value = "ingestion-server")]
+        output: PathBuf,
+
+        /// Database type (postgresql, mysql, mariadb)
+        #[arg(short, long, default_value = "postgresql")]
+        database: String,
+
+        /// Server port
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+
+        /// Server name for Cargo.toml
+        #[arg(short, long, default_value = "ingestion-server")]
+        name: String,
+    },
 }
 
 fn main() {
@@ -84,6 +126,12 @@ fn main() {
         }
         Commands::BuildFromConfig { config, output, release, test } => {
             build_from_config(config, output, release, test)
+        }
+        Commands::GenerateDashboard { entities, output, database, backend } => {
+            generate_dashboard(entities, output, database, backend)
+        }
+        Commands::GenerateIngestionServer { entities, output, database, port, name } => {
+            generate_ingestion_server(entities, output, database, port, name)
         }
     };
 
@@ -391,7 +439,8 @@ fn build_from_config(
 
     // Generate all code
     println!("\n🔧 Generating Rust code...");
-    let generation_config = build_config.to_generation_config()?;
+    let source_root_str = source_root.to_str().ok_or("Invalid source_root path")?;
+    let generation_config = build_config.to_generation_config_with_root(Some(source_root_str))?;
     nomnom::codegen::generate_all_from_config(&generation_config)
         .map_err(|e| format!("Code generation failed: {}", e))?;
     println!("  ✓ Code generation complete");
@@ -570,6 +619,238 @@ fn build_from_config(
     println!("  Project: {}", build_config.project.name);
     println!("  Version: {}", build_config.project.version);
     println!("  Extension installed to: {}", source_root.display());
+
+    Ok(())
+}
+
+/// Generate real-time dashboard for database monitoring
+fn generate_dashboard(
+    entities_dir: PathBuf,
+    output: PathBuf,
+    database_str: String,
+    backend_str: String,
+) -> Result<(), String> {
+    println!("🎨 Generating real-time dashboard...\n");
+
+    // Validate entities directory
+    if !entities_dir.exists() {
+        return Err(format!("Entities directory not found: {}", entities_dir.display()));
+    }
+
+    // Load entities
+    println!("📋 Loading entities from {}...", entities_dir.display());
+    let entities = nomnom::codegen::load_entities(&entities_dir)
+        .map_err(|e| format!("Failed to load entities: {}", e))?;
+
+    println!("  ✓ Loaded {} entities", entities.len());
+
+    // Count persistent entities
+    let persistent_count = entities.iter().filter(|e| e.is_persistent()).count();
+    if persistent_count == 0 {
+        return Err("No persistent entities found. Dashboard requires entities with database configuration.".to_string());
+    }
+
+    println!("  ✓ Found {} persistent entities for monitoring", persistent_count);
+
+    // List persistent entities
+    for entity in &entities {
+        if entity.is_persistent() && !entity.is_abstract {
+            println!("    - {} (table: {})",
+                entity.name,
+                entity.get_database_config()
+                    .map(|db| db.conformant_table.as_str())
+                    .unwrap_or("unknown"));
+        }
+    }
+    println!();
+
+    // Parse database type
+    let db_type = match database_str.to_lowercase().as_str() {
+        "postgresql" | "postgres" | "pg" => nomnom::codegen::dashboard::DatabaseType::PostgreSQL,
+        "mysql" => nomnom::codegen::dashboard::DatabaseType::MySQL,
+        "mariadb" => nomnom::codegen::dashboard::DatabaseType::MariaDB,
+        _ => {
+            return Err(format!(
+                "Unsupported database type: '{}'. Supported types: postgresql, mysql, mariadb",
+                database_str
+            ));
+        }
+    };
+
+    // Parse backend type
+    let backend_type = match backend_str.to_lowercase().as_str() {
+        "axum" => nomnom::codegen::dashboard::BackendType::Axum,
+        "fastapi" => nomnom::codegen::dashboard::BackendType::FastAPI,
+        _ => {
+            return Err(format!(
+                "Unsupported backend type: '{}'. Supported types: axum, fastapi",
+                backend_str
+            ));
+        }
+    };
+
+    println!("🗄️  Database type: {}", db_type.as_str());
+    println!("🔧 Backend type: {:?}", backend_type);
+    println!();
+
+    // Generate dashboard
+    nomnom::codegen::dashboard::generate_all(
+        &entities,
+        &output,
+        entities_dir.to_str().ok_or("Invalid entities directory path")?,
+        db_type,
+        backend_type,
+    ).map_err(|e| format!("Dashboard generation failed: {}", e))?;
+
+    println!("\n✨ Dashboard generated successfully!");
+    println!("📁 Output directory: {}", output.display());
+
+    println!("\n📖 Next steps:");
+
+    match backend_type {
+        nomnom::codegen::dashboard::BackendType::FastAPI => {
+            println!("  1. Review generated files:");
+            println!("     - SQL migrations:  {}/migrations/", output.display());
+            println!("     - Backend code:    {}/backend/", output.display());
+            println!("     - Frontend code:   {}/frontend/", output.display());
+            println!();
+            println!("  2. Run database migrations:");
+            println!("     cd {}/migrations && ./run.sh", output.display());
+            println!();
+            println!("  3. Install frontend dependencies:");
+            println!("     cd {}/frontend && npm install", output.display());
+            println!();
+            println!("  4. Start dashboard services:");
+            println!("     docker compose -f docker-compose.yml -f {}/docker-compose.dashboard.yml up", output.display());
+            println!();
+            println!("  5. Access dashboard:");
+            println!("     Frontend: http://localhost:5173");
+            println!("     Backend:  http://localhost:8000/docs");
+        }
+        nomnom::codegen::dashboard::BackendType::Axum => {
+            println!("  1. Configure database connection:");
+            println!("     cd {}", output.display());
+            println!("     cp .env.example .env");
+            println!("     # Edit .env with your DATABASE_URL");
+            println!();
+            println!("  2. Build the Axum backend:");
+            println!("     cargo build --release");
+            println!();
+            println!("  3. Run the backend:");
+            println!("     cargo run --release");
+            println!();
+            println!("  4. Install frontend dependencies:");
+            println!("     cd frontend && npm install");
+            println!();
+            println!("  5. Start frontend (in another terminal):");
+            println!("     cd frontend && npm run dev");
+            println!();
+            println!("  6. Access dashboard:");
+            println!("     Frontend: http://localhost:5173");
+            println!("     Backend API: http://localhost:3000/api/health");
+        }
+    }
+
+    Ok(())
+}
+
+/// Generate Axum-based HTTP ingestion server
+fn generate_ingestion_server(
+    entities_dir: PathBuf,
+    output: PathBuf,
+    database_str: String,
+    port: u16,
+    server_name: String,
+) -> Result<(), String> {
+    println!("🚀 Generating Axum ingestion server...\n");
+
+    // Validate entities directory
+    if !entities_dir.exists() {
+        return Err(format!("Entities directory not found: {}", entities_dir.display()));
+    }
+
+    // Load entities
+    println!("📋 Loading entities from {}...", entities_dir.display());
+    let entities = nomnom::codegen::load_entities(&entities_dir)
+        .map_err(|e| format!("Failed to load entities: {}", e))?;
+
+    println!("  ✓ Loaded {} entities", entities.len());
+
+    // Count persistent entities
+    let persistent_count = entities.iter()
+        .filter(|e| e.is_persistent() && !e.is_abstract && e.source_type.to_lowercase() != "reference")
+        .count();
+
+    if persistent_count == 0 {
+        return Err("No persistent entities found. Ingestion server requires entities with database configuration.".to_string());
+    }
+
+    println!("  ✓ Found {} persistent entities for ingestion", persistent_count);
+
+    // List persistent entities
+    for entity in &entities {
+        if entity.is_persistent() && !entity.is_abstract && entity.source_type.to_lowercase() != "reference" {
+            println!("    - {} (table: {})",
+                entity.name,
+                entity.get_database_config()
+                    .map(|db| db.conformant_table.as_str())
+                    .unwrap_or("unknown"));
+        }
+    }
+    println!();
+
+    // Parse database type
+    let db_type = match database_str.to_lowercase().as_str() {
+        "postgresql" | "postgres" | "pg" => nomnom::codegen::ingestion_server::DatabaseType::PostgreSQL,
+        "mysql" => nomnom::codegen::ingestion_server::DatabaseType::MySQL,
+        "mariadb" => nomnom::codegen::ingestion_server::DatabaseType::MariaDB,
+        _ => {
+            return Err(format!(
+                "Unsupported database type: '{}'. Supported types: postgresql, mysql, mariadb",
+                database_str
+            ));
+        }
+    };
+
+    println!("🗄️  Database type: {}", db_type.as_str());
+    println!();
+
+    // Create ingestion server config
+    let config = nomnom::codegen::ingestion_server::IngestionServerConfig {
+        database_type: db_type,
+        port,
+        server_name: server_name.clone(),
+    };
+
+    // Generate ingestion server
+    nomnom::codegen::ingestion_server::generate_all(
+        &entities,
+        &output,
+        &config,
+    ).map_err(|e| format!("Ingestion server generation failed: {}", e))?;
+
+    println!("\n✨ Ingestion server generated successfully!");
+    println!("📁 Output directory: {}", output.display());
+
+    println!("\n📖 Next steps:");
+    println!("  1. Configure database connection:");
+    println!("     cd {}", output.display());
+    println!("     cp .env.example .env");
+    println!("     # Edit .env with your database credentials");
+    println!();
+    println!("  2. Build the server:");
+    println!("     cargo build --release");
+    println!();
+    println!("  3. Run the server:");
+    println!("     cargo run --release");
+    println!();
+    println!("  4. Send test messages:");
+    println!("     curl -X POST http://localhost:{}/ingest/message \\", port);
+    println!("       -H \"Content-Type: text/plain\" \\");
+    println!("       -d \"YOUR_MESSAGE_HERE\"");
+    println!();
+    println!("  5. View API documentation:");
+    println!("     http://localhost:{}/swagger-ui", port);
 
     Ok(())
 }

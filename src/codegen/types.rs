@@ -335,6 +335,9 @@ pub struct EntityDef {
     /// Serialization methods to generate
     #[serde(default)]
     pub serialization: Vec<String>,
+    /// Message prefix for ingestion server parsing (e.g., "O" for Order, "L" for LineItem)
+    #[serde(default)]
+    pub prefix: Option<String>,
 }
 
 impl EntityDef {

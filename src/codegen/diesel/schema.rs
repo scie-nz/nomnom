@@ -117,7 +117,7 @@ pub fn generate_schema(
                                     }
                                 },
                                 "Integer" => "Integer".to_string(),
-                                "Float" => "Float".to_string(),
+                                "Float" => "Numeric".to_string(),  // Use Numeric for BigDecimal compatibility
                                 "Boolean" => "Bool".to_string(),
                                 "DateTime" => "Timestamp".to_string(),
                                 _ => "Text".to_string(),

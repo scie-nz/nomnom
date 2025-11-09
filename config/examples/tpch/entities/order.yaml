@@ -5,6 +5,7 @@
 entity:
   name: Order
   source_type: root  # Root entity - can be loaded from JSON/CSV
+  prefix: "O"  # Message prefix for ingestion server
   doc: "Represents a customer order"
 
   fields:

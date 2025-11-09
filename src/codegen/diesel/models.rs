@@ -67,7 +67,7 @@ pub fn generate_models(
     writeln!(output, "//! Diesel models generated from entity YAML configs\n")?;
     writeln!(output, "use diesel::prelude::*;")?;
     writeln!(output, "use serde::{{Serialize, Deserialize}};")?;
-    writeln!(output, "use bigdecimal::BigDecimal;")?;
+    writeln!(output, "use bigdecimal::{{BigDecimal, FromPrimitive}};")?;
     writeln!(output, "use crate::schema::*;\n")?;
 
     // For each entity with persistence, generate a model struct
@@ -117,10 +117,10 @@ pub fn generate_models(
 
                         writeln!(output, "}}\n")?;
 
-                        // Generate New* struct (for reference - not used with column-based insertion)
+                        // Generate New* struct for insertion
                         // This excludes auto-generated primary key fields
-                        // NOTE: We don't derive Insertable to avoid f64 issues - use column-based insertion instead
-                        writeln!(output, "#[derive(Debug, Clone)]")?;
+                        writeln!(output, "#[derive(Debug, Clone, Insertable)]")?;
+                        writeln!(output, "#[diesel(table_name = {})]", db_config.conformant_table)?;
                         writeln!(output, "pub struct New{} {{", entity.name)?;
 
                         // Skip primary key if it's auto-generated
@@ -156,6 +156,73 @@ pub fn generate_models(
                             writeln!(output, "    pub {}: {},", field.name, final_type)?;
                         }
 
+                        writeln!(output, "}}\n")?;
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate From trait implementations for Core -> NewX conversions
+    writeln!(output, "\n// From trait implementations for Core -> New conversions\n")?;
+
+    for entity in entities {
+        let yaml_path = format!("{}/{}.yaml", config_dir, entity.name.to_lowercase());
+        if let Ok(yaml_content) = std::fs::read_to_string(&yaml_path) {
+            if let Ok(yaml) = serde_yaml::from_str::<EntityWrapper>(&yaml_content) {
+                if let Some(persistence) = yaml.entity.persistence {
+                    if let Some(db_config) = persistence.database {
+                        let core_type = format!("crate::generated::{}Core", entity.name);
+                        let new_type = format!("New{}", entity.name);
+
+                        writeln!(output, "impl From<&{}> for {} {{", core_type, new_type)?;
+                        writeln!(output, "    fn from(core: &{}) -> Self {{", core_type)?;
+                        writeln!(output, "        Self {{")?;
+
+                        // Handle primary key if not auto-generated
+                        let has_autogen_pk = if let Some(ref pk_config) = persistence.primary_key {
+                            let is_autogen = pk_config.key_type == "Integer";
+                            if !is_autogen {
+                                writeln!(output, "            {}: core.{}.clone(),", pk_config.name, pk_config.name)?;
+                            }
+                            is_autogen
+                        } else {
+                            false
+                        };
+
+                        // Convert each field
+                        for field in &persistence.field_overrides {
+                            match field.field_type.as_str() {
+                                "Float" => {
+                                    // Convert f64 to BigDecimal
+                                    if field.nullable {
+                                        writeln!(output, "            {}: core.{}.and_then(BigDecimal::from_f64),",
+                                            field.name, field.name)?;
+                                    } else {
+                                        writeln!(output, "            {}: BigDecimal::from_f64(core.{}).unwrap_or_else(|| BigDecimal::from(0)),",
+                                            field.name, field.name)?;
+                                    }
+                                },
+                                "Integer" => {
+                                    // Convert i64 to i32
+                                    if field.nullable {
+                                        writeln!(output, "            {}: core.{}.map(|v| v as i32),",
+                                            field.name, field.name)?;
+                                    } else {
+                                        writeln!(output, "            {}: core.{} as i32,",
+                                            field.name, field.name)?;
+                                    }
+                                },
+                                _ => {
+                                    // String, Boolean, DateTime - direct clone
+                                    writeln!(output, "            {}: core.{}.clone(),",
+                                        field.name, field.name)?;
+                                }
+                            }
+                        }
+
+                        writeln!(output, "        }}")?;
+                        writeln!(output, "    }}")?;
                         writeln!(output, "}}\n")?;
                     }
                 }
