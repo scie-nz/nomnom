@@ -12,37 +12,41 @@ pub fn generate_dockerfiles(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Generate Dockerfile.backend for Axum/Rust
+/// Generate Dockerfile.backend for Axum/Rust (Alpine + Security Hardened)
 fn generate_backend_dockerfile(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     let dockerfile = output_dir.join("Dockerfile.backend");
     let mut output = std::fs::File::create(&dockerfile)?;
 
-    writeln!(output, "# Multi-stage Dockerfile for Rust dashboard backend")?;
-    writeln!(output, "FROM rust:latest as builder\n")?;
-    writeln!(output, "# Install build dependencies")?;
-    writeln!(output, "RUN apt-get update && apt-get install -y \\")?;
-    writeln!(output, "    pkg-config \\")?;
-    writeln!(output, "    libssl-dev \\")?;
-    writeln!(output, "    libpq-dev \\")?;
-    writeln!(output, "    && rm -rf /var/lib/apt/lists/*\n")?;
+    writeln!(output, "# Multi-stage Dockerfile for Rust dashboard backend (Alpine + Security Hardened)")?;
+    writeln!(output, "FROM rust:alpine as builder\n")?;
+    writeln!(output, "# Install build dependencies for musl")?;
+    writeln!(output, "RUN apk add --no-cache \\")?;
+    writeln!(output, "    musl-dev \\")?;
+    writeln!(output, "    pkgconfig \\")?;
+    writeln!(output, "    openssl-dev \\")?;
+    writeln!(output, "    postgresql-dev\n")?;
     writeln!(output, "WORKDIR /build\n")?;
     writeln!(output, "# Copy manifests")?;
     writeln!(output, "COPY Cargo.toml Cargo.lock* ./\n")?;
     writeln!(output, "# Copy source")?;
     writeln!(output, "COPY src ./src\n")?;
-    writeln!(output, "# Build release binary")?;
+    writeln!(output, "# Build release binary with musl target")?;
     writeln!(output, "RUN cargo build --release\n")?;
-    writeln!(output, "# Runtime stage")?;
-    writeln!(output, "FROM debian:bookworm-slim\n")?;
+    writeln!(output, "# Runtime stage - minimal Alpine")?;
+    writeln!(output, "FROM alpine:3.19\n")?;
     writeln!(output, "# Install runtime dependencies")?;
-    writeln!(output, "RUN apt-get update && apt-get install -y \\")?;
+    writeln!(output, "RUN apk add --no-cache \\")?;
     writeln!(output, "    ca-certificates \\")?;
-    writeln!(output, "    libssl3 \\")?;
-    writeln!(output, "    libpq5 \\")?;
-    writeln!(output, "    && rm -rf /var/lib/apt/lists/*\n")?;
+    writeln!(output, "    libgcc \\")?;
+    writeln!(output, "    postgresql-libs\n")?;
+    writeln!(output, "# Create non-root user")?;
+    writeln!(output, "RUN addgroup -g 1000 appuser && \\")?;
+    writeln!(output, "    adduser -D -u 1000 -G appuser appuser\n")?;
     writeln!(output, "WORKDIR /app\n")?;
-    writeln!(output, "# Copy binary from builder")?;
-    writeln!(output, "COPY --from=builder /build/target/release/dashboard /app/\n")?;
+    writeln!(output, "# Copy binary from builder and set ownership")?;
+    writeln!(output, "COPY --from=builder --chown=appuser:appuser /build/target/release/dashboard /app/\n")?;
+    writeln!(output, "# Switch to non-root user")?;
+    writeln!(output, "USER appuser:appuser\n")?;
     writeln!(output, "# Expose default port")?;
     writeln!(output, "EXPOSE 3000\n")?;
     writeln!(output, "# Run the binary")?;
