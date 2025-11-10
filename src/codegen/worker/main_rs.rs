@@ -59,6 +59,20 @@ pub fn generate_main_rs(
     writeln!(output, "    let consumer_name = std::env::var(\"NATS_CONSUMER\")")?;
     writeln!(output, "        .unwrap_or_else(|_| \"workers\".to_string());\n")?;
 
+    writeln!(output, "    // Get worker configuration")?;
+    writeln!(output, "    let max_deliver = std::env::var(\"MAX_DELIVER\")")?;
+    writeln!(output, "        .ok()")?;
+    writeln!(output, "        .and_then(|s| s.parse::<i64>().ok())")?;
+    writeln!(output, "        .unwrap_or(3);")?;
+    writeln!(output, "    let batch_size = std::env::var(\"BATCH_SIZE\")")?;
+    writeln!(output, "        .ok()")?;
+    writeln!(output, "        .and_then(|s| s.parse::<usize>().ok())")?;
+    writeln!(output, "        .unwrap_or(10);")?;
+    writeln!(output, "    let poll_interval_ms = std::env::var(\"POLL_INTERVAL_MS\")")?;
+    writeln!(output, "        .ok()")?;
+    writeln!(output, "        .and_then(|s| s.parse::<u64>().ok())")?;
+    writeln!(output, "        .unwrap_or(100);\n")?;
+
     writeln!(output, "    // Create database pool")?;
     writeln!(output, "    let db_pool = create_pool()")?;
     writeln!(output, "        .expect(\"Failed to create database pool\");\n")?;
@@ -100,7 +114,7 @@ pub fn generate_main_rs(
     writeln!(output, "            jetstream::consumer::pull::Config {{")?;
     writeln!(output, "                durable_name: Some(consumer_name.clone()),")?;
     writeln!(output, "                ack_policy: jetstream::consumer::AckPolicy::Explicit,")?;
-    writeln!(output, "                max_deliver: 3,")?;
+    writeln!(output, "                max_deliver,")?;
     writeln!(output, "                filter_subject: \"messages.ingest.>\".to_string(),")?;
     writeln!(output, "                ..Default::default()")?;
     writeln!(output, "            }}")?;
@@ -126,7 +140,7 @@ pub fn generate_main_rs(
     writeln!(output, "        // Fetch batch of messages")?;
     writeln!(output, "        let mut messages = consumer")?;
     writeln!(output, "            .fetch()")?;
-    writeln!(output, "            .max_messages(10)")?;
+    writeln!(output, "            .max_messages(batch_size)")?;
     writeln!(output, "            .messages()")?;
     writeln!(output, "            .await")?;
     writeln!(output, "            .expect(\"Failed to fetch messages\");\n")?;
@@ -149,17 +163,88 @@ pub fn generate_main_rs(
     writeln!(output, "                    }}")?;
     writeln!(output, "                }}")?;
     writeln!(output, "                Err(e) => {{")?;
-    writeln!(output, "                    tracing::error!(\"Failed to process message: {{:?}}\", e);")?;
-    writeln!(output, "                    // Negative acknowledge - message will be redelivered")?;
-    writeln!(output, "                    if let Err(e) = msg.ack_with(jetstream::AckKind::Nak(None)).await {{")?;
-    writeln!(output, "                        tracing::error!(\"Failed to NAK message: {{}}\", e);")?;
+    writeln!(output, "                    tracing::error!(\"Failed to process message: {{:?}}\", e);\n")?;
+
+    writeln!(output, "                    // Get delivery count to check if we should route to DLQ")?;
+    writeln!(output, "                    let delivery_count = msg.info()")?;
+    writeln!(output, "                        .map(|info| info.delivered)")?;
+    writeln!(output, "                        .unwrap_or(1);\n")?;
+
+    writeln!(output, "                    // Extract message info for status updates and DLQ routing")?;
+    writeln!(output, "                    if let Ok(envelope) = serde_json::from_slice::<serde_json::Value>(&msg.payload) {{")?;
+    writeln!(output, "                        if let Some(msg_id) = envelope.get(\"message_id\").and_then(|v| v.as_str()) {{")?;
+    writeln!(output, "                            if let Ok(uuid) = uuid::Uuid::parse_str(msg_id) {{")?;
+    writeln!(output, "                                if delivery_count >= max_deliver {{")?;
+    writeln!(output, "                                    // Max retries reached - route to DLQ")?;
+    writeln!(output, "                                    tracing::warn!(")?;
+    writeln!(output, "                                        \"Message {{}} failed after {{}} attempts, sending to DLQ\",")?;
+    writeln!(output, "                                        msg_id,")?;
+    writeln!(output, "                                        delivery_count")?;
+    writeln!(output, "                                    );\n")?;
+
+    writeln!(output, "                                    // Extract entity_type for DLQ subject")?;
+    writeln!(output, "                                    let entity_type = envelope.get(\"entity_type\")")?;
+    writeln!(output, "                                        .and_then(|v| v.as_str())")?;
+    writeln!(output, "                                        .unwrap_or(\"unknown\");\n")?;
+
+    writeln!(output, "                                    // Publish to DLQ stream")?;
+    writeln!(output, "                                    let dlq_subject = format!(\"messages.dlq.{{}}\", entity_type);")?;
+    writeln!(output, "                                    if let Err(dlq_err) = jetstream")?;
+    writeln!(output, "                                        .publish(dlq_subject.clone(), msg.payload.clone())")?;
+    writeln!(output, "                                        .await")?;
+    writeln!(output, "                                    {{")?;
+    writeln!(output, "                                        tracing::error!(\"Failed to publish to DLQ: {{}}\", dlq_err);")?;
+    writeln!(output, "                                    }} else {{")?;
+    writeln!(output, "                                        tracing::info!(\"Message {{}} routed to DLQ\", msg_id);")?;
+    writeln!(output, "                                    }}\n")?;
+
+    writeln!(output, "                                    // Update status to 'dlq'")?;
+    writeln!(output, "                                    if let Ok(mut conn) = db_pool.get() {{")?;
+    writeln!(output, "                                        diesel::sql_query(")?;
+    writeln!(output, "                                            r#\"UPDATE message_status")?;
+    writeln!(output, "                                               SET status = $1, error_message = $2")?;
+    writeln!(output, "                                               WHERE message_id = $3\"#")?;
+    writeln!(output, "                                        )")?;
+    writeln!(output, "                                        .bind::<Text, _>(\"dlq\")")?;
+    writeln!(output, "                                        .bind::<Text, _>(&format!(\"Failed after {{}} attempts: {{:?}}\", delivery_count, e))")?;
+    writeln!(output, "                                        .bind::<diesel::sql_types::Uuid, _>(&uuid)")?;
+    writeln!(output, "                                        .execute(&mut conn)")?;
+    writeln!(output, "                                        .ok();")?;
+    writeln!(output, "                                    }}\n")?;
+
+    writeln!(output, "                                    // ACK the original message (remove from main queue)")?;
+    writeln!(output, "                                    if let Err(ack_err) = msg.ack().await {{")?;
+    writeln!(output, "                                        tracing::error!(\"Failed to ACK DLQ message: {{}}\", ack_err);")?;
+    writeln!(output, "                                    }}")?;
+    writeln!(output, "                                }} else {{")?;
+    writeln!(output, "                                    // Still have retries left - update status and NAK")?;
+    writeln!(output, "                                    if let Ok(mut conn) = db_pool.get() {{")?;
+    writeln!(output, "                                        diesel::sql_query(")?;
+    writeln!(output, "                                            r#\"UPDATE message_status")?;
+    writeln!(output, "                                               SET status = $1, error_message = $2, retry_count = retry_count + 1")?;
+    writeln!(output, "                                               WHERE message_id = $3\"#")?;
+    writeln!(output, "                                        )")?;
+    writeln!(output, "                                        .bind::<Text, _>(\"failed\")")?;
+    writeln!(output, "                                        .bind::<Text, _>(&format!(\"{{:?}}\", e))")?;
+    writeln!(output, "                                        .bind::<diesel::sql_types::Uuid, _>(&uuid)")?;
+    writeln!(output, "                                        .execute(&mut conn)")?;
+    writeln!(output, "                                        .ok();")?;
+    writeln!(output, "                                    }}\n")?;
+
+    writeln!(output, "                                    // NAK for retry")?;
+    writeln!(output, "                                    if let Err(nak_err) = msg.ack_with(jetstream::AckKind::Nak(None)).await {{")?;
+    writeln!(output, "                                        tracing::error!(\"Failed to NAK message: {{}}\", nak_err);")?;
+    writeln!(output, "                                    }}")?;
+    writeln!(output, "                                }}")?;
+    writeln!(output, "                            }}")?;
+    writeln!(output, "                        }}")?;
     writeln!(output, "                    }}")?;
     writeln!(output, "                }}")?;
     writeln!(output, "            }}")?;
     writeln!(output, "        }}")?;
     writeln!(output)?;
     writeln!(output, "        // Small delay between batches")?;
-    writeln!(output, "        tokio::time::sleep(Duration::from_millis(100)).await;")?;
+    writeln!(output, "        tokio::time::sleep(Duration::from_millis(poll_interval_ms)).await;")?;
     writeln!(output, "    }}")?;
     writeln!(output, "}}\n")?;
 
@@ -172,13 +257,23 @@ pub fn generate_main_rs(
     writeln!(output, "    let envelope: MessageEnvelope = serde_json::from_slice(payload)")?;
     writeln!(output, "        .map_err(|e| AppError::ValidationError(format!(\"Invalid envelope: {{}}\", e)))?;\n")?;
 
-    writeln!(output, "    tracing::debug!(\"Processing message {{}}\", envelope.message_id);\n")?;
-
-    writeln!(output, "    // Parse message body using entity-specific parsers")?;
-    writeln!(output, "    let (entity_name, parsed) = MessageParser::parse_json(&envelope.body)?;\n")?;
+    writeln!(output, "    let message_id = envelope.message_id;")?;
+    writeln!(output, "    tracing::debug!(\"Processing message {{}}\", message_id);\n")?;
 
     writeln!(output, "    // Get database connection")?;
     writeln!(output, "    let mut conn = pool.get()?;\n")?;
+
+    writeln!(output, "    // Update status to 'processing'")?;
+    writeln!(output, "    diesel::sql_query(")?;
+    writeln!(output, "        r#\"UPDATE message_status SET status = $1 WHERE message_id = $2\"#")?;
+    writeln!(output, "    )")?;
+    writeln!(output, "    .bind::<Text, _>(\"processing\")")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Uuid, _>(&message_id)")?;
+    writeln!(output, "    .execute(&mut conn)")?;
+    writeln!(output, "    .ok(); // Ignore errors - status tracking is optional\n")?;
+
+    writeln!(output, "    // Parse message body using entity-specific parsers")?;
+    writeln!(output, "    let (entity_name, parsed) = MessageParser::parse_json(&envelope.body)?;\n")?;
 
     writeln!(output, "    // Insert into database based on entity type")?;
     writeln!(output, "    match parsed {{")?;
@@ -235,7 +330,19 @@ pub fn generate_main_rs(
             writeln!(output)?;
         }
 
-        writeln!(output, "            tracing::info!(\"Inserted {{}} message\", entity_name);")?;
+        writeln!(output, "            tracing::info!(\"Inserted {{}} message\", entity_name);\n")?;
+
+        writeln!(output, "            // Update status to 'completed'")?;
+        writeln!(output, "            diesel::sql_query(")?;
+        writeln!(output, "                r#\"UPDATE message_status")?;
+        writeln!(output, "                   SET status = $1, processed_at = NOW()")?;
+        writeln!(output, "                   WHERE message_id = $2\"#")?;
+        writeln!(output, "            )")?;
+        writeln!(output, "            .bind::<Text, _>(\"completed\")")?;
+        writeln!(output, "            .bind::<diesel::sql_types::Uuid, _>(&message_id)")?;
+        writeln!(output, "            .execute(&mut conn)")?;
+        writeln!(output, "            .ok(); // Ignore errors - status tracking is optional\n")?;
+
         writeln!(output, "            Ok(())")?;
         writeln!(output, "        }}")?;
     }

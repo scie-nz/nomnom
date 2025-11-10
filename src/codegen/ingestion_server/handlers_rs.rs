@@ -47,6 +47,9 @@ pub fn generate_handlers_rs(
     // Generate health_check handler
     generate_health_check_handler(&mut output, entities)?;
 
+    // Generate ready_check handler
+    generate_ready_check_handler(&mut output)?;
+
     // Generate stats handler
     generate_stats_handler(&mut output)?;
 
@@ -84,11 +87,24 @@ fn generate_ingest_message_handler(
     writeln!(output, "        .and_then(|v| v.get(\"entity_type\").and_then(|t| t.as_str().map(String::from)));\n")?;
 
     writeln!(output, "    // Create message envelope")?;
-    writeln!(output, "    let envelope = MessageEnvelope::new(body, entity_type);\n")?;
+    writeln!(output, "    let envelope = MessageEnvelope::new(body, entity_type.clone());\n")?;
 
     writeln!(output, "    // Publish to NATS JetStream")?;
     writeln!(output, "    state.nats.publish_message(&envelope).await")?;
     writeln!(output, "        .map_err(|e| AppError::InternalError(format!(\"NATS publish failed: {{}}\", e)))?;\n")?;
+
+    writeln!(output, "    // Record message status in database")?;
+    writeln!(output, "    let mut conn = state.db_pool.get()?;")?;
+    writeln!(output, "    diesel::sql_query(")?;
+    writeln!(output, "        r#\"INSERT INTO message_status (message_id, entity_type, status, received_at)")?;
+    writeln!(output, "           VALUES ($1, $2, $3, $4)\"#")?;
+    writeln!(output, "    )")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Uuid, _>(&envelope.message_id)")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Text, _>(entity_type.as_deref().unwrap_or(\"unknown\"))")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Text, _>(\"accepted\")")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Timestamp, _>(&envelope.received_at.naive_utc())")?;
+    writeln!(output, "    .execute(&mut conn)")?;
+    writeln!(output, "    .ok(); // Ignore errors - status tracking is optional\n")?;
 
     writeln!(output, "    tracing::info!(\"Message {{}} queued for processing\", envelope.message_id);\n")?;
 
@@ -212,6 +228,29 @@ fn generate_health_check_handler(
     Ok(())
 }
 
+fn generate_ready_check_handler(
+    output: &mut std::fs::File,
+) -> Result<(), Box<dyn Error>> {
+    writeln!(output, "/// Readiness check endpoint (lightweight)")?;
+    writeln!(output, "#[utoipa::path(")?;
+    writeln!(output, "    get,")?;
+    writeln!(output, "    path = \"/ready\",")?;
+    writeln!(output, "    responses(")?;
+    writeln!(output, "        (status = 200, description = \"Service is ready to accept traffic\")")?;
+    writeln!(output, "    )")?;
+    writeln!(output, ")]")?;
+    writeln!(output, "pub async fn ready_check() -> impl IntoResponse {{")?;
+    writeln!(output, "    // Lightweight check - just verify the app is running")?;
+    writeln!(output, "    // Don't check database here (that's for /health)")?;
+    writeln!(output, "    Json(serde_json::json!({{")?;
+    writeln!(output, "        \"ready\": true,")?;
+    writeln!(output, "        \"timestamp\": chrono::Utc::now().to_rfc3339()")?;
+    writeln!(output, "    }}))")?;
+    writeln!(output, "}}\n")?;
+
+    Ok(())
+}
+
 fn generate_stats_handler(
     output: &mut std::fs::File,
 ) -> Result<(), Box<dyn Error>> {
@@ -247,13 +286,49 @@ fn generate_status_check_handler(
     writeln!(output, "    let uuid = Uuid::parse_str(&message_id)")?;
     writeln!(output, "        .map_err(|_| AppError::ValidationError(\"Invalid UUID format\".to_string()))?;\n")?;
 
-    writeln!(output, "    // TODO: Query message_status table for processing status")?;
-    writeln!(output, "    // For now, return a placeholder response")?;
-    writeln!(output, "    Ok(Json(serde_json::json!({{")?;
-    writeln!(output, "        \"message_id\": message_id,")?;
-    writeln!(output, "        \"status\": \"accepted\",")?;
-    writeln!(output, "        \"message\": \"Status tracking not yet implemented - requires message_status table\"")?;
-    writeln!(output, "    }})))")?;
+    writeln!(output, "    // Query message_status table")?;
+    writeln!(output, "    let mut conn = state.db_pool.get()?;\n")?;
+
+    writeln!(output, "    #[derive(diesel::QueryableByName)]")?;
+    writeln!(output, "    struct MessageStatus {{")?;
+    writeln!(output, "        #[diesel(sql_type = diesel::sql_types::Text)]")?;
+    writeln!(output, "        entity_type: String,")?;
+    writeln!(output, "        #[diesel(sql_type = diesel::sql_types::Text)]")?;
+    writeln!(output, "        status: String,")?;
+    writeln!(output, "        #[diesel(sql_type = diesel::sql_types::Timestamp)]")?;
+    writeln!(output, "        received_at: chrono::NaiveDateTime,")?;
+    writeln!(output, "        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Timestamp>)]")?;
+    writeln!(output, "        processed_at: Option<chrono::NaiveDateTime>,")?;
+    writeln!(output, "        #[diesel(sql_type = diesel::sql_types::Integer)]")?;
+    writeln!(output, "        retry_count: i32,")?;
+    writeln!(output, "        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]")?;
+    writeln!(output, "        error_message: Option<String>,")?;
+    writeln!(output, "    }}\n")?;
+
+    writeln!(output, "    let result: Option<MessageStatus> = diesel::sql_query(")?;
+    writeln!(output, "        r#\"SELECT entity_type, status, received_at, processed_at, retry_count, error_message")?;
+    writeln!(output, "           FROM message_status WHERE message_id = $1\"#")?;
+    writeln!(output, "    )")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Uuid, _>(&uuid)")?;
+    writeln!(output, "    .get_result(&mut conn)")?;
+    writeln!(output, "    .optional()?;\n")?;
+
+    writeln!(output, "    match result {{")?;
+    writeln!(output, "        Some(status) => {{")?;
+    writeln!(output, "            Ok(Json(serde_json::json!({{")?;
+    writeln!(output, "                \"message_id\": message_id,")?;
+    writeln!(output, "                \"entity_type\": status.entity_type,")?;
+    writeln!(output, "                \"status\": status.status,")?;
+    writeln!(output, "                \"received_at\": status.received_at.and_utc().to_rfc3339(),")?;
+    writeln!(output, "                \"processed_at\": status.processed_at.map(|t| t.and_utc().to_rfc3339()),")?;
+    writeln!(output, "                \"retry_count\": status.retry_count,")?;
+    writeln!(output, "                \"error_message\": status.error_message,")?;
+    writeln!(output, "            }})))")?;
+    writeln!(output, "        }}")?;
+    writeln!(output, "        None => {{")?;
+    writeln!(output, "            Err(AppError::ValidationError(\"Message not found\".to_string()))")?;
+    writeln!(output, "        }}")?;
+    writeln!(output, "    }}")?;
     writeln!(output, "}}")?;
 
     Ok(())

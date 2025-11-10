@@ -46,6 +46,7 @@ pub fn generate_main_rs(
     writeln!(output, "        handlers::ingest_message,")?;
     writeln!(output, "        handlers::ingest_batch,")?;
     writeln!(output, "        handlers::health_check,")?;
+    writeln!(output, "        handlers::ready_check,")?;
     writeln!(output, "        handlers::check_status,")?;
     writeln!(output, "    ),")?;
     writeln!(output, "    components(schemas(")?;
@@ -88,6 +89,7 @@ pub fn generate_main_rs(
     writeln!(output, "        .route(\"/ingest/status/:message_id\", get(handlers::check_status))")?;
     writeln!(output, "        // Utility endpoints")?;
     writeln!(output, "        .route(\"/health\", get(handlers::health_check))")?;
+    writeln!(output, "        .route(\"/ready\", get(handlers::ready_check))")?;
     writeln!(output, "        .route(\"/stats\", get(handlers::stats))")?;
     writeln!(output, "        // Swagger UI")?;
     writeln!(output, "        .merge(SwaggerUi::new(\"/swagger-ui\")")?;

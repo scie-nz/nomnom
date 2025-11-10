@@ -30,10 +30,10 @@ pub fn generate_cargo_toml(
     writeln!(output, "# Database")?;
     match config.database_type {
         DatabaseType::PostgreSQL => {
-            writeln!(output, "diesel = {{ version = \"2\", features = [\"postgres\", \"r2d2\", \"chrono\", \"numeric\"] }}")?;
+            writeln!(output, "diesel = {{ version = \"2\", features = [\"postgres\", \"r2d2\", \"chrono\", \"numeric\", \"uuid\"] }}")?;
         }
         DatabaseType::MySQL | DatabaseType::MariaDB => {
-            writeln!(output, "diesel = {{ version = \"2\", features = [\"mysql\", \"r2d2\", \"chrono\", \"numeric\"] }}")?;
+            writeln!(output, "diesel = {{ version = \"2\", features = [\"mysql\", \"r2d2\", \"chrono\", \"numeric\", \"uuid\"] }}")?;
         }
     }
     writeln!(output, "r2d2 = \"0.8\"\n")?;

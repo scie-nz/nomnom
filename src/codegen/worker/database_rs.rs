@@ -119,6 +119,33 @@ pub fn generate_database_rs(
         writeln!(output, "    .execute(conn)?;\n")?;
     }
 
+    // Add message_status table for tracking message processing
+    writeln!(output, "    // Create message_status table for tracking message processing")?;
+    writeln!(output, "    diesel::sql_query(r#\"")?;
+    writeln!(output, "        CREATE TABLE IF NOT EXISTS message_status (")?;
+    writeln!(output, "            message_id UUID PRIMARY KEY,")?;
+    writeln!(output, "            entity_type VARCHAR(50) NOT NULL,")?;
+    writeln!(output, "            status VARCHAR(20) NOT NULL,")?;
+    writeln!(output, "            received_at TIMESTAMP NOT NULL,")?;
+    writeln!(output, "            processed_at TIMESTAMP,")?;
+    writeln!(output, "            retry_count INTEGER DEFAULT 0,")?;
+    writeln!(output, "            error_message TEXT,")?;
+    writeln!(output, "            source VARCHAR(255)")?;
+    writeln!(output, "        )")?;
+    writeln!(output, "    \"#)")?;
+    writeln!(output, "    .execute(conn)?;\n")?;
+
+    writeln!(output, "    // Create indices for message_status")?;
+    writeln!(output, "    diesel::sql_query(r#\"")?;
+    writeln!(output, "        CREATE INDEX IF NOT EXISTS idx_message_status_received_at ON message_status(received_at)")?;
+    writeln!(output, "    \"#)")?;
+    writeln!(output, "    .execute(conn)?;\n")?;
+
+    writeln!(output, "    diesel::sql_query(r#\"")?;
+    writeln!(output, "        CREATE INDEX IF NOT EXISTS idx_message_status_status ON message_status(status)")?;
+    writeln!(output, "    \"#)")?;
+    writeln!(output, "    .execute(conn)?;\n")?;
+
     writeln!(output, "    tracing::info!(\"All tables ensured\");")?;
     writeln!(output, "    Ok(())")?;
     writeln!(output, "}}")?;
