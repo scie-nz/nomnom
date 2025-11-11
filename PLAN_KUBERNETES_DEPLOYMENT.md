@@ -646,21 +646,26 @@ ingress:
 
 ## Implementation Steps
 
-### Phase 1: Helm Chart Generation (Automated)
-1. **Add Helm generation to nomnom CLI**
+### Phase 1: Write Static Helm Chart
+1. **Create canonical Helm chart structure**
    ```bash
-   nomnom generate-helm \
-     --entities config/examples/tpch/entities \
-     --output nomnom-helm \
-     --namespace nomnom
+   mkdir -p nomnom-helm/templates/{nats,postgres,ingestion,dashboard}
    ```
 
-2. **Generator creates**:
+2. **Write standard templates** (one-time, reusable):
    - Chart.yaml with version and metadata
    - values.yaml with all configurable parameters
-   - All template files for each component
+   - Template files for each component (NATS, PostgreSQL, ingestion, dashboard)
    - Helper templates for common labels
    - NOTES.txt with deployment instructions
+   - values-dev.yaml for kind/local development
+   - values-prod.yaml template for production
+
+3. **What varies per deployment**: Only the `values.yaml` overrides
+   - Image names/tags (e.g., `tpch-ingestion-api` vs `ecommerce-ingestion-api`)
+   - Database name (e.g., `tpch` vs `ecommerce`)
+   - Resource limits (dev vs prod)
+   - Replica counts (dev vs prod)
 
 ### Phase 2: kind Cluster Setup
 1. Install kind: `brew install kind` (macOS) or download binary
@@ -821,72 +826,139 @@ kubectl rollout undo deployment/ingestion-server -n nomnom
 3. **Database connection pooling**: Configure in application
 4. **Ingress optimization**: Enable caching, compression
 
-## File Generation Plan
+## Helm Chart Structure (Static, Reusable)
 
-When implementing, nomnom will generate:
+The Helm chart is **written once** and reused across all deployments. Only `values.yaml` changes between deployments.
 
 ```
 nomnom-helm/
-├── Chart.yaml                      # Generated with version info
-├── values.yaml                     # Generated from entity config
-├── values-dev.yaml                 # Template with kind settings
+├── Chart.yaml                      # Static metadata
+├── values.yaml                     # Default configuration
+├── values-dev.yaml                 # kind/local overrides
+├── values-prod.yaml                # Production template
+├── values-tpch.yaml                # TPCH example overrides
 ├── README.md                       # Usage instructions
 ├── templates/
 │   ├── _helpers.tpl                # Common labels, names
 │   ├── NOTES.txt                   # Post-install instructions
-│   ├── namespace.yaml              # Namespace
+│   ├── namespace.yaml              # Namespace resource
 │   ├── configmap.yaml              # App configuration
 │   ├── secrets.yaml                # Database secrets
-│   ├── postgres-statefulset.yaml   # PostgreSQL
-│   ├── postgres-service.yaml       # PostgreSQL service
-│   ├── postgres-pvc.yaml           # PostgreSQL storage
-│   ├── ingestion-deployment.yaml   # Generated from entities
-│   ├── ingestion-service.yaml      # Generated
-│   ├── ingestion-hpa.yaml          # Generated
-│   ├── dashboard-deployment.yaml   # Generated
-│   ├── dashboard-service.yaml      # Generated
-│   ├── frontend-deployment.yaml    # Generated
-│   ├── frontend-service.yaml       # Generated
-│   └── ingress.yaml                # Generated with routes
+│   │
+│   ├── nats/
+│   │   ├── statefulset.yaml        # NATS JetStream
+│   │   ├── service.yaml            # NATS services
+│   │   └── configmap.yaml          # NATS config
+│   │
+│   ├── postgres/
+│   │   ├── statefulset.yaml        # PostgreSQL
+│   │   ├── service.yaml            # PostgreSQL service
+│   │   └── pvc.yaml                # Storage claim
+│   │
+│   ├── ingestion/
+│   │   ├── api-deployment.yaml     # Ingestion API
+│   │   ├── api-service.yaml        # API service
+│   │   ├── api-hpa.yaml            # API autoscaling
+│   │   ├── worker-deployment.yaml  # Worker pods
+│   │   └── worker-scaledobject.yaml # KEDA scaling
+│   │
+│   ├── dashboard/
+│   │   ├── backend-deployment.yaml # Dashboard backend
+│   │   ├── backend-service.yaml    # Backend service
+│   │   ├── frontend-deployment.yaml # Dashboard frontend
+│   │   └── frontend-service.yaml   # Frontend service
+│   │
+│   └── ingress.yaml                # Ingress routes
 └── tests/
     └── test-connection.yaml        # Helm test
 ```
 
+**Key principle**: Templates use Go template syntax with values from `values.yaml`. Different deployments just provide different values files.
+
+**Example deployment workflow**:
+```bash
+# TPCH deployment
+helm install tpch-nomnom ./nomnom-helm -f values-tpch.yaml
+
+# E-commerce deployment
+helm install ecommerce-nomnom ./nomnom-helm -f values-ecommerce.yaml
+
+# Same chart, different configurations!
+```
+
+Where `values-tpch.yaml` contains:
+```yaml
+ingestion:
+  api:
+    image:
+      repository: tpch-ingestion-api
+      tag: v1.0.0
+database:
+  name: tpch
+```
+
+And `values-ecommerce.yaml` contains:
+```yaml
+ingestion:
+  api:
+    image:
+      repository: ecommerce-ingestion-api
+      tag: v1.0.0
+database:
+  name: ecommerce
+```
+
 ## Success Criteria
 
-- [ ] Helm chart generates successfully
+- [ ] Helm chart written and validates successfully (`helm lint`)
+- [ ] Chart templates render correctly (`helm template`)
 - [ ] kind cluster creates without errors
+- [ ] NATS and KEDA install successfully
 - [ ] Images load into kind successfully
 - [ ] PostgreSQL StatefulSet reaches Ready state
-- [ ] Ingestion Deployment scales to desired replicas
+- [ ] NATS StatefulSet reaches Ready state with JetStream enabled
+- [ ] Ingestion API Deployment scales to desired replicas
+- [ ] Worker Deployment managed by KEDA
 - [ ] Dashboard Deployment scales to desired replicas
-- [ ] All pods pass health checks
+- [ ] All pods pass health checks (liveness and readiness)
 - [ ] Ingress routes traffic correctly
-- [ ] Ingestion API accepts and stores messages
+- [ ] Ingestion API accepts messages (202 Accepted)
+- [ ] Workers process messages from NATS
+- [ ] Message status tracking works (accepted → processing → completed)
+- [ ] DLQ routing works (failed messages after MAX_DELIVER attempts)
 - [ ] Dashboard API returns data
 - [ ] Dashboard UI loads and displays data
-- [ ] HPA triggers on load
+- [ ] KEDA scaling triggers based on NATS queue depth
 - [ ] Rolling updates complete successfully
 - [ ] Helm tests pass
 
 ## Next Steps
 
-1. **Create Helm chart generator**:
-   - Add to nomnom CLI: `generate-helm` command
-   - Generate templates from entity definitions
-   - Support customization via flags
+1. **Write static Helm chart**:
+   - Create `nomnom-helm/` directory structure
+   - Write Kubernetes resource templates (NATS, PostgreSQL, ingestion, dashboard)
+   - Create `values.yaml` with all configurable parameters
+   - Create `values-dev.yaml` for kind testing
+   - Write `_helpers.tpl` for common labels and names
+   - Add `NOTES.txt` with post-install instructions
 
 2. **Test with kind**:
-   - Set up kind cluster
-   - Deploy and validate
-   - Document any issues
+   - Set up kind cluster with ingress and KEDA
+   - Build and load Docker images
+   - Deploy using `helm install nomnom ./nomnom-helm -f values-dev.yaml`
+   - Validate all components (NATS, PostgreSQL, workers, API, dashboard)
+   - Test end-to-end: message ingestion → NATS → workers → PostgreSQL → dashboard
+   - Test DLQ routing with intentionally failing messages
+   - Test KEDA autoscaling under load
 
 3. **Production hardening**:
-   - Add network policies
-   - Implement secrets management
-   - Set up monitoring
+   - Add network policies (restrict inter-service communication)
+   - Create `values-prod.yaml` template
+   - Document secrets management approach (Sealed Secrets/External Secrets)
+   - Add resource quotas and limits
 
 4. **Documentation**:
-   - Deployment guide
-   - Troubleshooting guide
-   - Architecture diagrams
+   - Write deployment guide (README in nomnom-helm/)
+   - Create troubleshooting guide
+   - Document common operations (scaling, updates, rollbacks)
+   - Add architecture diagrams showing K8s components
