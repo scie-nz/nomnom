@@ -444,6 +444,43 @@ fn generate_derived_entity_processors(
     Ok(())
 }
 
+/// Recursively collect entity dependencies in topological order (dependencies first)
+fn collect_entity_dependencies(
+    entity_name: &str,
+    all_entities: &[EntityDef],
+    root_entity: &EntityDef,
+    ordered_list: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    // Skip if already processed or is the root entity
+    if seen.contains(entity_name) || entity_name == root_entity.name.as_str() {
+        return;
+    }
+
+    // Find the entity definition
+    if let Some(entity) = all_entities.iter().find(|e| e.name == entity_name) {
+        // First, recursively process this entity's dependencies
+        for field in &entity.fields {
+            if let Some(ref computed_from) = field.computed_from {
+                for source in &computed_from.sources {
+                    let source_entity = source.source_name();
+                    collect_entity_dependencies(
+                        source_entity,
+                        all_entities,
+                        root_entity,
+                        ordered_list,
+                        seen
+                    );
+                }
+            }
+        }
+
+        // Then add this entity (after its dependencies)
+        seen.insert(entity_name.to_string());
+        ordered_list.push(entity_name.to_string());
+    }
+}
+
 /// Generate extraction and persistence logic for a single derived entity
 fn generate_derived_entity_extraction(
     output: &mut std::fs::File,
@@ -473,10 +510,11 @@ fn generate_derived_entity_extraction(
             .map(|f| (f.name.clone(), f))
             .collect();
 
-    // Track which intermediate entities we need to instantiate
-    let mut needed_entities: HashSet<String> = HashSet::new();
+    // Track which intermediate entities we need to instantiate (with dependencies)
+    let mut needed_entities: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
-    // First pass: identify all intermediate entities needed
+    // First pass: recursively collect all intermediate entities needed
     for field in fields {
         let field_name = &field.name;
 
@@ -485,14 +523,20 @@ fn generate_derived_entity_extraction(
                 for source in &computed_from.sources {
                     let source_entity = source.source_name();
                     if source_entity != root_entity.name.as_str() {
-                        needed_entities.insert(source_entity.to_string());
+                        collect_entity_dependencies(
+                            source_entity,
+                            all_entities,
+                            root_entity,
+                            &mut needed_entities,
+                            &mut seen
+                        );
                     }
                 }
             }
         }
     }
 
-    // Generate intermediate entity instantiation
+    // Generate intermediate entity instantiation (in dependency order)
     for entity_name in &needed_entities {
         if let Some(intermediate_entity) = all_entities.iter().find(|e| &e.name == entity_name) {
             writeln!(output, "    // Instantiate {} entity", entity_name)?;
@@ -652,17 +696,38 @@ fn generate_field_extraction(
                 } else {
                     format!("&{}.{}, {}", root_param_name, src_field, args_list.join(", "))
                 };
-                // Handle Result<Option<T>> -> Option<T> by using .unwrap_or(None)
-                writeln!(output, "    let {} = {}({}).unwrap_or(None);",
+                // Handle Result<Option<T>> -> Option<T> for Option types
+                // Handle Result<Vec<T>, E> -> Vec<T> for List types
+                if is_nullable {
+                    writeln!(output, "    let {} = {}({}).unwrap_or(None);",
+                        field_name,
+                        transform,
+                        all_args)?;
+                } else {
+                    // Non-nullable - could be Vec or required type
+                    writeln!(output, "    let {} = {}({}).unwrap_or_else(|_| vec![]);",
+                        field_name,
+                        transform,
+                        all_args)?;
+                }
+            } else {
+                // Call transform with intermediate entity variable
+                let intermediate_var = format!("{}_{}", source_entity.to_lowercase(), src_field);
+
+                // Check if the intermediate variable needs to be unwrapped (Option<String>)
+                // If it's Option<String>, we need to pass it as Option reference or unwrap
+                let all_args = if args_list.is_empty() {
+                    // For transforms that expect &str, unwrap Option or use empty string
+                    format!("{}.as_ref().map(|s| s.as_str()).unwrap_or(\"\")", intermediate_var)
+                } else {
+                    format!("{}.as_ref().map(|s| s.as_str()).unwrap_or(\"\"), {}", intermediate_var, args_list.join(", "))
+                };
+
+                writeln!(output, "    let {} = if {}.is_some() {{ {}({}).unwrap_or(None) }} else {{ None }};",
                     field_name,
+                    intermediate_var,
                     transform,
                     all_args)?;
-            } else {
-                writeln!(output, "    let {}: Option<String> = {}; // TODO: Transform from {} -> {}",
-                    field_name,
-                    if is_nullable { "None" } else { "Some(String::new())" },
-                    source_entity,
-                    src_field)?;
             }
         } else {
             writeln!(output, "    let {}: Option<String> = {}; // TODO: Transform with direct source",
