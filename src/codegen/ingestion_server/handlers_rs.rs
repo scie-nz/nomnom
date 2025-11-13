@@ -77,21 +77,44 @@ fn generate_ingest_message_handler(
     writeln!(output, "    State(state): State<Arc<AppState>>,")?;
     writeln!(output, "    body: String,")?;
     writeln!(output, ") -> Result<(StatusCode, Json<IngestionResponse>), AppError> {{")?;
+    writeln!(output, "    eprintln!(\"[INGESTION-SERVER] Received message ({{}} bytes)\", body.len());\n")?;
+
     writeln!(output, "    // Optionally validate JSON format (but don't parse entities yet)")?;
-    writeln!(output, "    let _: serde_json::Value = serde_json::from_str(&body)")?;
-    writeln!(output, "        .map_err(|e| AppError::ValidationError(format!(\"Invalid JSON: {{}}\", e)))?;\n")?;
+    writeln!(output, "    let json_value: serde_json::Value = serde_json::from_str(&body)")?;
+    writeln!(output, "        .map_err(|e| {{")?;
+    writeln!(output, "            eprintln!(\"[INGESTION-SERVER] JSON parse error: {{}}\", e);")?;
+    writeln!(output, "            eprintln!(\"[INGESTION-SERVER] Raw body: {{}}\", body);")?;
+    writeln!(output, "            AppError::ValidationError(format!(\"Invalid JSON: {{}}\", e))")?;
+    writeln!(output, "        }})?;\n")?;
+
+    writeln!(output, "    // Pretty-print the JSON for debugging")?;
+    writeln!(output, "    if let Ok(pretty) = serde_json::to_string_pretty(&json_value) {{")?;
+    writeln!(output, "        eprintln!(\"[INGESTION-SERVER] Parsed JSON:\\n{{}}\", pretty);")?;
+    writeln!(output, "    }}\n")?;
 
     writeln!(output, "    // Extract entity_type hint if available (from JSON)")?;
-    writeln!(output, "    let entity_type = serde_json::from_str::<serde_json::Value>(&body)")?;
-    writeln!(output, "        .ok()")?;
-    writeln!(output, "        .and_then(|v| v.get(\"entity_type\").and_then(|t| t.as_str().map(String::from)));\n")?;
+    writeln!(output, "    let entity_type = json_value.get(\"entity_type\")")?;
+    writeln!(output, "        .and_then(|t| t.as_str())")?;
+    writeln!(output, "        .map(String::from);\n")?;
+
+    writeln!(output, "    if let Some(ref et) = entity_type {{")?;
+    writeln!(output, "        eprintln!(\"[INGESTION-SERVER] Entity type hint: {{}}\", et);")?;
+    writeln!(output, "    }} else {{")?;
+    writeln!(output, "        eprintln!(\"[INGESTION-SERVER] No entity_type hint provided\");")?;
+    writeln!(output, "    }}\n")?;
 
     writeln!(output, "    // Create message envelope")?;
     writeln!(output, "    let envelope = MessageEnvelope::new(body, entity_type.clone());\n")?;
 
     writeln!(output, "    // Publish to NATS JetStream")?;
+    writeln!(output, "    eprintln!(\"[INGESTION-SERVER] Publishing message {{}} to NATS\", envelope.message_id);")?;
     writeln!(output, "    state.nats.publish_message(&envelope).await")?;
-    writeln!(output, "        .map_err(|e| AppError::InternalError(format!(\"NATS publish failed: {{}}\", e)))?;\n")?;
+    writeln!(output, "        .map_err(|e| {{")?;
+    writeln!(output, "            eprintln!(\"[INGESTION-SERVER] NATS publish failed: {{}}\", e);")?;
+    writeln!(output, "            AppError::InternalError(format!(\"NATS publish failed: {{}}\", e))")?;
+    writeln!(output, "        }})?;\n")?;
+
+    writeln!(output, "    eprintln!(\"[INGESTION-SERVER] Message {{}} successfully queued\", envelope.message_id);\n")?;
 
     writeln!(output, "    // Record message status in database")?;
     writeln!(output, "    let mut conn = state.db_pool.get()?;")?;

@@ -254,11 +254,21 @@ pub fn generate_main_rs(
     writeln!(output, "    payload: &[u8],")?;
     writeln!(output, "    pool: &database::DbPool,")?;
     writeln!(output, ") -> Result<(), AppError> {{")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Received message ({{}} bytes)\", payload.len());\n")?;
+
     writeln!(output, "    // Deserialize envelope")?;
     writeln!(output, "    let envelope: MessageEnvelope = serde_json::from_slice(payload)")?;
-    writeln!(output, "        .map_err(|e| AppError::ValidationError(format!(\"Invalid envelope: {{}}\", e)))?;\n")?;
+    writeln!(output, "        .map_err(|e| {{")?;
+    writeln!(output, "            eprintln!(\"[WORKER] Envelope deserialization error: {{}}\", e);")?;
+    writeln!(output, "            eprintln!(\"[WORKER] Raw payload: {{}}\", String::from_utf8_lossy(payload));")?;
+    writeln!(output, "            AppError::ValidationError(format!(\"Invalid envelope: {{}}\", e))")?;
+    writeln!(output, "        }})?;\n")?;
 
     writeln!(output, "    let message_id = envelope.message_id;")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Processing message {{}}\", message_id);")?;
+    writeln!(output, "    if let Some(ref et) = envelope.entity_type {{")?;
+    writeln!(output, "        eprintln!(\"[WORKER] Entity type: {{}}\", et);")?;
+    writeln!(output, "    }}")?;
     writeln!(output, "    tracing::debug!(\"Processing message {{}}\", message_id);\n")?;
 
     writeln!(output, "    // Get database connection")?;
@@ -275,7 +285,21 @@ pub fn generate_main_rs(
 
     writeln!(output, "    // Parse message body using entity-specific parsers")?;
     writeln!(output, "    // Use entity_type hint from envelope if available")?;
-    writeln!(output, "    let (entity_name, parsed, raw_json) = MessageParser::parse_json(&envelope.body, envelope.entity_type.as_deref())?;\n")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Parsing message body...\");")?;
+    writeln!(output, "    let (entity_name, parsed, raw_json) = MessageParser::parse_json(&envelope.body, envelope.entity_type.as_deref())")?;
+    writeln!(output, "        .map_err(|e| {{")?;
+    writeln!(output, "            eprintln!(\"[WORKER] Parse error: {{:?}}\", e);")?;
+    writeln!(output, "            // Try to pretty-print the JSON for debugging")?;
+    writeln!(output, "            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&envelope.body) {{")?;
+    writeln!(output, "                if let Ok(pretty) = serde_json::to_string_pretty(&json_val) {{")?;
+    writeln!(output, "                    eprintln!(\"[WORKER] Failed to parse entity from JSON:\\n{{}}\", pretty);")?;
+    writeln!(output, "                }}")?;
+    writeln!(output, "            }} else {{")?;
+    writeln!(output, "                eprintln!(\"[WORKER] Raw body (not valid JSON): {{}}\", envelope.body);")?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "            e")?;
+    writeln!(output, "        }})?;")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Successfully parsed as entity: {{}}\", entity_name);\n")?;
 
     writeln!(output, "    // Insert into database based on entity type")?;
     writeln!(output, "    match parsed {{")?;
@@ -330,6 +354,8 @@ pub fn generate_main_rs(
                 .map(|i| format!("${}", i))
                 .collect();
 
+            writeln!(output, "            eprintln!(\"[WORKER] Inserting {{}} into table {}\", entity_name);",
+                table_name)?;
             writeln!(output, "            diesel::sql_query(")?;
             writeln!(output, "                r#\"INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING\"#",
                 table_name,
@@ -350,15 +376,25 @@ pub fn generate_main_rs(
                 }
             }
 
-            writeln!(output, "            .execute(&mut conn)?;")?;
+            writeln!(output, "            .execute(&mut conn)")?;
+            writeln!(output, "            .map_err(|e| {{")?;
+            writeln!(output, "                eprintln!(\"[WORKER] Database insertion error for {}: {{:?}}\", e);", table_name)?;
+            writeln!(output, "                e")?;
+            writeln!(output, "            }})?;")?;
+            writeln!(output, "            eprintln!(\"[WORKER] Successfully inserted into {}\");", table_name)?;
             writeln!(output)?;
         }
 
         // If this root entity has derived persistent entities, process them
         if has_derived_entities {
             writeln!(output, "            // Process derived persistent entities")?;
-            writeln!(output, "            process_{}_derived_entities(msg, &raw_json, &mut conn)?;",
+            writeln!(output, "            eprintln!(\"[WORKER] Processing derived entities for {{}}\", entity_name);")?;
+            writeln!(output, "            process_{}_derived_entities(msg, &raw_json, &mut conn)",
                 entity.name.to_lowercase())?;
+            writeln!(output, "                .map_err(|e| {{")?;
+            writeln!(output, "                    eprintln!(\"[WORKER] Error processing derived entities: {{:?}}\", e);")?;
+            writeln!(output, "                    e")?;
+            writeln!(output, "                }})?;")?;
             writeln!(output)?;
         }
 
