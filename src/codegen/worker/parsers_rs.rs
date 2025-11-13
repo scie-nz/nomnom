@@ -20,14 +20,13 @@ pub fn generate_parsers_rs(
     writeln!(output, "use rust_decimal::Decimal;")?;
     writeln!(output, "use std::str::FromStr;\n")?;
 
-    // Generate ParsedMessage enum (for root entities AND non-root persistent entities)
+    // Generate ParsedMessage enum (only for root entities that can be parsed from JSON)
     writeln!(output, "#[derive(Debug)]")?;
     writeln!(output, "pub enum ParsedMessage {{")?;
     for entity in entities {
-        // Include root entities AND non-root persistent entities
-        // Root entities are the entry point for messages
-        // Non-root persistent entities may need to be parsed from JSON/message data
-        let include_entity = (entity.is_root() || entity.is_persistent())
+        // Only include root entities - derived entities are instantiated from root entities
+        // Non-root persistent entities shouldn't be parsed directly from JSON
+        let include_entity = entity.is_root()
             && !entity.is_abstract
             && entity.source_type.to_lowercase() != "reference";
 
@@ -37,10 +36,10 @@ pub fn generate_parsers_rs(
     }
     writeln!(output, "}}\n")?;
 
-    // Generate message structs for root entities AND non-root persistent entities
+    // Generate message structs only for root entities
     for entity in entities {
-        // Include root entities AND non-root persistent entities
-        let include_entity = (entity.is_root() || entity.is_persistent())
+        // Only include root entities
+        let include_entity = entity.is_root()
             && !entity.is_abstract
             && entity.source_type.to_lowercase() != "reference";
 
@@ -56,10 +55,10 @@ pub fn generate_parsers_rs(
     // Main parse_line function
     generate_parse_line_function(&mut output, entities)?;
 
-    // Individual parser functions for root entities AND non-root persistent entities
+    // Individual parser functions only for root entities
     for entity in entities {
-        // Include root entities AND non-root persistent entities
-        let include_entity = (entity.is_root() || entity.is_persistent())
+        // Only include root entities
+        let include_entity = entity.is_root()
             && !entity.is_abstract
             && entity.source_type.to_lowercase() != "reference";
 
@@ -125,8 +124,8 @@ fn generate_parse_line_function(
     writeln!(output, "            match entity_type {{")?;
 
     for entity in entities {
-        // Include root entities AND non-root persistent entities
-        let include_entity = (entity.is_root() || entity.is_persistent())
+        // Only include root entities
+        let include_entity = entity.is_root()
             && !entity.is_abstract
             && entity.source_type.to_lowercase() != "reference";
 
@@ -145,26 +144,12 @@ fn generate_parse_line_function(
     writeln!(output, "            }}")?;
     writeln!(output, "        }}\n")?;
 
-    // Generate fallback logic - try to parse as each entity type
-    // Prioritize root entities first, then non-root persistent entities
-    writeln!(output, "        // Fallback: Try to parse as each known entity type")?;
-    writeln!(output, "        // Try root entities first")?;
+    // Generate fallback logic - only try root entities
+    writeln!(output, "        // Fallback: Try to parse as each known root entity type")?;
 
     for entity in entities {
-        // Include root entities first
+        // Only include root entities
         if !entity.is_root() || entity.is_abstract || entity.source_type.to_lowercase() == "reference" {
-            continue;
-        }
-
-        writeln!(output, "        if let Ok(msg) = Self::parse_{}(obj) {{", entity.name.to_lowercase())?;
-        writeln!(output, "            return Ok((\"{}\".to_string(), ParsedMessage::{}(msg), value.clone()));", entity.name, entity.name)?;
-        writeln!(output, "        }}")?;
-    }
-
-    writeln!(output, "\n        // Try non-root persistent entities")?;
-    for entity in entities {
-        // Include non-root persistent entities
-        if entity.is_root() || !entity.is_persistent() || entity.is_abstract || entity.source_type.to_lowercase() == "reference" {
             continue;
         }
 

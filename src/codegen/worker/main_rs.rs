@@ -433,7 +433,7 @@ fn generate_derived_entity_processors(
 
         // Process each derived entity
         for derived_entity in &derived_entities {
-            generate_derived_entity_extraction(output, derived_entity, root_entity)?;
+            generate_derived_entity_extraction(output, derived_entity, root_entity, entities)?;
         }
 
         writeln!(output, "    tracing::info!(\"Processed derived entities for {}\");\n", root_entity.name)?;
@@ -449,13 +449,17 @@ fn generate_derived_entity_extraction(
     output: &mut std::fs::File,
     derived_entity: &EntityDef,
     root_entity: &EntityDef,
+    all_entities: &[EntityDef],
 ) -> Result<(), Box<dyn Error>> {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     let persistence = derived_entity.persistence.as_ref().unwrap();
     let db_config = persistence.database.as_ref().unwrap();
     let table_name = &db_config.conformant_table;
     let fields = &persistence.field_overrides;
+
+    // Generate root entity parameter name (lowercase)
+    let root_param_name = root_entity.name.to_lowercase();
 
     writeln!(output, "    // Process {} entities", derived_entity.name)?;
 
@@ -469,6 +473,42 @@ fn generate_derived_entity_extraction(
             .map(|f| (f.name.clone(), f))
             .collect();
 
+    // Track which intermediate entities we need to instantiate
+    let mut needed_entities: HashSet<String> = HashSet::new();
+
+    // First pass: identify all intermediate entities needed
+    for field in fields {
+        let field_name = &field.name;
+
+        if let Some(field_def) = field_defs.get(field_name) {
+            if let Some(ref computed_from) = field_def.computed_from {
+                for source in &computed_from.sources {
+                    let source_entity = source.source_name();
+                    if source_entity != root_entity.name.as_str() {
+                        needed_entities.insert(source_entity.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate intermediate entity instantiation
+    for entity_name in &needed_entities {
+        if let Some(intermediate_entity) = all_entities.iter().find(|e| &e.name == entity_name) {
+            writeln!(output, "    // Instantiate {} entity", entity_name)?;
+
+            // For each field in the intermediate entity, generate extraction code
+            for field in &intermediate_entity.fields {
+                if let Some(ref computed_from) = field.computed_from {
+                    let var_name = format!("{}_{}", entity_name.to_lowercase(), field.name);
+                    generate_field_extraction(output, &var_name, computed_from, root_entity, &root_param_name, field.nullable)?;
+                }
+            }
+
+            writeln!(output)?;
+        }
+    }
+
     // Generate field extraction for each field in derived entity
     for field in fields {
         let field_name = &field.name;
@@ -478,7 +518,7 @@ fn generate_derived_entity_extraction(
         if let Some(field_def) = field_defs.get(field_name) {
             if let Some(ref computed_from) = field_def.computed_from {
                 // Generate extraction code based on computed_from configuration
-                generate_field_extraction(output, field_name, computed_from, root_entity, is_nullable)?;
+                generate_field_extraction(output, field_name, computed_from, root_entity, &root_param_name, is_nullable)?;
                 continue;
             }
         }
@@ -553,6 +593,7 @@ fn generate_field_extraction(
     field_name: &str,
     computed_from: &crate::codegen::types::ComputedFrom,
     root_entity: &EntityDef,
+    root_param_name: &str,
     is_nullable: bool,
 ) -> Result<(), Box<dyn Error>> {
     let transform = &computed_from.transform;
@@ -570,20 +611,20 @@ fn generate_field_extraction(
         if let Some(src_field) = source_field {
             if source_entity == root_entity.name.as_str() {
                 // Direct access from root message
-                writeln!(output, "    let {} = {}msg.{}.clone();",
+                writeln!(output, "    let {} = {}{}.{}.clone();",
                     field_name,
                     if is_nullable { "Some(" } else { "" },
+                    root_param_name,
                     src_field)?;
                 if is_nullable {
                     writeln!(output, "    // Close Some()")?;
                 }
             } else {
-                // Need to extract from intermediate entity - not yet implemented
-                writeln!(output, "    let {} = {}; // TODO: Extract from {} -> {}",
+                // Access from intermediate entity variable
+                let intermediate_var = format!("{}_{}", source_entity.to_lowercase(), src_field);
+                writeln!(output, "    let {} = {}.clone();",
                     field_name,
-                    if is_nullable { "None" } else { "String::new()" },
-                    source_entity,
-                    src_field)?;
+                    intermediate_var)?;
             }
         } else {
             writeln!(output, "    let {} = {}; // TODO: Direct source reference",
@@ -596,21 +637,25 @@ fn generate_field_extraction(
         let source_entity = source.source_name();
         let source_field = source.field_name();
 
-        // Generate transform function call
-        let args_str = if let Some(ref args) = computed_from.args {
-            format_transform_args(args)
+        // Generate transform function call arguments
+        let args_list = if let Some(ref args) = computed_from.args {
+            format_transform_args_list(args)
         } else {
-            String::new()
+            vec![]
         };
 
         if let Some(src_field) = source_field {
             if source_entity == root_entity.name.as_str() {
                 // Call transform with root message field
-                writeln!(output, "    let {} = {}(&msg.{}{}).ok();",
+                let all_args = if args_list.is_empty() {
+                    format!("&{}.{}", root_param_name, src_field)
+                } else {
+                    format!("&{}.{}, {}", root_param_name, src_field, args_list.join(", "))
+                };
+                writeln!(output, "    let {} = {}({}).ok();",
                     field_name,
                     transform,
-                    src_field,
-                    if !args_str.is_empty() { format!(", {}", args_str) } else { String::new() })?;
+                    all_args)?;
             } else {
                 writeln!(output, "    let {} = {}; // TODO: Transform from {} -> {}",
                     field_name,
@@ -633,7 +678,26 @@ fn generate_field_extraction(
     Ok(())
 }
 
-/// Format transform function arguments from YAML value
+/// Format transform function arguments from YAML value as a list
+fn format_transform_args_list(args: &serde_yaml::Value) -> Vec<String> {
+    match args {
+        serde_yaml::Value::Mapping(map) => {
+            map.iter()
+                .map(|(_, v)| {
+                    match v {
+                        serde_yaml::Value::String(s) => format!("\"{}\"", s),
+                        serde_yaml::Value::Number(n) => n.to_string(),
+                        serde_yaml::Value::Bool(b) => b.to_string(),
+                        _ => "/* unsupported */".to_string(),
+                    }
+                })
+                .collect()
+        }
+        _ => vec![],
+    }
+}
+
+/// Format transform function arguments from YAML value (deprecated - use format_transform_args_list)
 fn format_transform_args(args: &serde_yaml::Value) -> String {
     match args {
         serde_yaml::Value::Mapping(map) => {
