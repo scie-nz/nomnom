@@ -1,6 +1,7 @@
 // Auto-generated from YAML entity specifications
 
-use nomnom::{Entity, FieldValue, EntityError, Context, IntoOptionString};
+use crate::entity::{Hl7Entity, ParsingContext, EntityError, FieldValue, IntoOptionString};
+use hl7utils::{Segment, FieldPath, safe_extract};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use pyo3::prelude::*;
@@ -27,6 +28,37 @@ pub fn json_get_int(obj: &serde_json::Value, field: &str) -> Result<i64, String>
     obj.get(field)
         .and_then(|v| v.as_i64())
         .ok_or_else(|| format!("Missing or invalid integer field '{}'", field))
+}
+
+/// Extract an optional string field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<Option<String>, String>
+pub fn json_get_optional_string(obj: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
+    Ok(obj.get(field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
+/// Extract an optional float field from a JSON object
+///
+/// # Arguments
+///
+/// * `obj` - &serde_json::Value
+/// * `field` - &str
+///
+/// # Returns
+///
+/// Result<Option<f64>, String>
+pub fn json_get_optional_float(obj: &serde_json::Value, field: &str) -> Result<Option<f64>, String> {
+    Ok(obj.get(field)
+        .and_then(|v| v.as_f64()))
 }
 
 /// Extract a string field from a JSON object
@@ -60,37 +92,6 @@ pub fn json_get_float(obj: &serde_json::Value, field: &str) -> Result<f64, Strin
     obj.get(field)
         .and_then(|v| v.as_f64())
         .ok_or_else(|| format!("Missing or invalid float field '{}'", field))
-}
-
-/// Extract an optional string field from a JSON object
-///
-/// # Arguments
-///
-/// * `obj` - &serde_json::Value
-/// * `field` - &str
-///
-/// # Returns
-///
-/// Result<Option<String>, String>
-pub fn json_get_optional_string(obj: &serde_json::Value, field: &str) -> Result<Option<String>, String> {
-    Ok(obj.get(field)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string()))
-}
-
-/// Extract an optional float field from a JSON object
-///
-/// # Arguments
-///
-/// * `obj` - &serde_json::Value
-/// * `field` - &str
-///
-/// # Returns
-///
-/// Result<Option<f64>, String>
-pub fn json_get_optional_float(obj: &serde_json::Value, field: &str) -> Result<Option<f64>, String> {
-    Ok(obj.get(field)
-        .and_then(|v| v.as_f64()))
 }
 
 // ============================================================================
@@ -146,40 +147,40 @@ impl OrderLineItemCore {
             // Extract field: order_key
             let order_key = order.order_key.clone();
             // Extract field: line_number
-            let line_number = json_get_int(item, "line_number")
+            let line_number = json_get_int(&Some(item.clone()), "line_number")
                 .map_err(|e| format!("Failed to extract 'line_number': {}", e))?;
             // Extract field: part_key
-            let part_key = json_get_string(item, "part_key")
+            let part_key = json_get_string(&Some(item.clone()), "part_key")
                 .map_err(|e| format!("Failed to extract 'part_key': {}", e))?;
             // Extract field: supplier_key
-            let supplier_key = json_get_optional_string(item, "supplier_key")
+            let supplier_key = json_get_optional_string(&Some(item.clone()), "supplier_key")
                 .map_err(|e| format!("Failed to extract 'supplier_key': {}", e))?;
             // Extract field: quantity
-            let quantity = json_get_int(item, "quantity")
+            let quantity = json_get_int(&Some(item.clone()), "quantity")
                 .map_err(|e| format!("Failed to extract 'quantity': {}", e))?;
             // Extract field: extended_price
-            let extended_price = json_get_float(item, "extended_price")
+            let extended_price = json_get_float(&Some(item.clone()), "extended_price")
                 .map_err(|e| format!("Failed to extract 'extended_price': {}", e))?;
             // Extract field: discount
-            let discount = json_get_optional_float(item, "discount")
+            let discount = json_get_optional_float(&Some(item.clone()), "discount")
                 .map_err(|e| format!("Failed to extract 'discount': {}", e))?;
             // Extract field: tax
-            let tax = json_get_optional_float(item, "tax")
+            let tax = json_get_optional_float(&Some(item.clone()), "tax")
                 .map_err(|e| format!("Failed to extract 'tax': {}", e))?;
             // Extract field: return_flag
-            let return_flag = json_get_optional_string(item, "return_flag")
+            let return_flag = json_get_optional_string(&Some(item.clone()), "return_flag")
                 .map_err(|e| format!("Failed to extract 'return_flag': {}", e))?;
             // Extract field: line_status
-            let line_status = json_get_optional_string(item, "line_status")
+            let line_status = json_get_optional_string(&Some(item.clone()), "line_status")
                 .map_err(|e| format!("Failed to extract 'line_status': {}", e))?;
             // Extract field: ship_date
-            let ship_date = json_get_optional_string(item, "ship_date")
+            let ship_date = json_get_optional_string(&Some(item.clone()), "ship_date")
                 .map_err(|e| format!("Failed to extract 'ship_date': {}", e))?;
             // Extract field: commit_date
-            let commit_date = json_get_optional_string(item, "commit_date")
+            let commit_date = json_get_optional_string(&Some(item.clone()), "commit_date")
                 .map_err(|e| format!("Failed to extract 'commit_date': {}", e))?;
             // Extract field: receipt_date
-            let receipt_date = json_get_optional_string(item, "receipt_date")
+            let receipt_date = json_get_optional_string(&Some(item.clone()), "receipt_date")
                 .map_err(|e| format!("Failed to extract 'receipt_date': {}", e))?;
 
             instances.push(Self {
@@ -238,6 +239,50 @@ impl OrderLineItemCore {
     }
 }
 
+/// Represents a product that can be ordered (reference data)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProductCore {
+    /// Unique part/product identifier
+    pub part_key: String,
+    /// Product name
+    pub name: String,
+    /// Manufacturer name
+    pub manufacturer: Option<String>,
+    /// Product brand
+    pub brand: Option<String>,
+    /// Type of product
+    pub product_type: Option<String>,
+    /// Product size
+    pub size: Option<i64>,
+    /// Container type (e.g., SM CASE, LG BOX)
+    pub container: Option<String>,
+    /// Retail price
+    pub retail_price: f64,
+    /// Product comments
+    pub comment: Option<String>,
+}
+
+/// Represents a customer who can place orders (reference data)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomerCore {
+    /// Unique customer identifier
+    pub customer_key: String,
+    /// Customer name
+    pub name: String,
+    /// Customer address
+    pub address: Option<String>,
+    /// Nation identifier
+    pub nation_key: Option<String>,
+    /// Customer phone number
+    pub phone: Option<String>,
+    /// Customer account balance
+    pub account_balance: f64,
+    /// Market segment (e.g., AUTOMOBILE, BUILDING, FURNITURE)
+    pub market_segment: Option<String>,
+    /// Customer comments
+    pub comment: Option<String>,
+}
+
 /// Represents a customer order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderCore {
@@ -260,7 +305,7 @@ pub struct OrderCore {
     /// Order comments
     pub comment: Option<String>,
     /// Array of line items in this order (each item is a dict with line item fields)
-    pub line_items: Vec<serde_json::Value>,
+    pub line_items: String,
 }
 
 impl OrderCore {
@@ -272,9 +317,19 @@ impl OrderCore {
     pub fn from_string(
         raw_input: &str,
     ) -> Result<Self, String> {
-        // Deserialize from JSON
-        serde_json::from_str(raw_input)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))
+
+        Ok(Self {
+            order_key,
+            customer_key,
+            order_status,
+            total_price,
+            order_date,
+            order_priority,
+            clerk,
+            ship_priority,
+            comment,
+            line_items,
+        })
     }
 
     /// Convert entity to dictionary/map
@@ -310,47 +365,32 @@ impl OrderCore {
     }
 }
 
-/// Represents a customer who can place orders (reference data)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomerCore {
-    /// Unique customer identifier
-    pub customer_key: String,
-    /// Customer name
-    pub name: String,
-    /// Customer address
-    pub address: Option<String>,
-    /// Nation identifier
-    pub nation_key: Option<String>,
-    /// Customer phone number
-    pub phone: Option<String>,
-    /// Customer account balance
-    pub account_balance: f64,
-    /// Market segment (e.g., AUTOMOBILE, BUILDING, FURNITURE)
-    pub market_segment: Option<String>,
-    /// Customer comments
-    pub comment: Option<String>,
+
+// ============================================================================
+// Shared Entity Extraction Helpers
+// ============================================================================
+
+/// Holds all permanent entities extracted from a message
+#[derive(Debug)]
+pub struct PermanentEntities {
+    pub order_line_item: OrderLineItemCore,
+    pub product: ProductCore,
+    pub customer: CustomerCore,
+    pub order: OrderCore,
 }
 
-/// Represents a product that can be ordered (reference data)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProductCore {
-    /// Unique part/product identifier
-    pub part_key: String,
-    /// Product name
-    pub name: String,
-    /// Manufacturer name
-    pub manufacturer: Option<String>,
-    /// Product brand
-    pub brand: Option<String>,
-    /// Type of product
-    pub product_type: Option<String>,
-    /// Product size
-    pub size: Option<i64>,
-    /// Container type (e.g., SM CASE, LG BOX)
-    pub container: Option<String>,
-    /// Retail price
-    pub retail_price: f64,
-    /// Product comments
-    pub comment: Option<String>,
+/// Extract all permanent entities from a file path
+pub fn extract_permanent_entities(file_path: &str) -> Result<PermanentEntities, Box<dyn std::error::Error>> {
+    // Parse root entity
+    let order = OrderCore::from_string(file_path)?;
+
+    let order_line_item = OrderLineItemCore::from_sources(&order)?;
+
+    Ok(PermanentEntities {
+        order_line_item,
+        product,
+        customer,
+        order,
+    })
 }
 

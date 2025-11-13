@@ -206,96 +206,6 @@ impl PyOrderLineItemCore {
     }
 }
 
-#[pyclass(name = "CustomerCore")]
-#[derive(Clone)]
-pub struct PyCustomerCore {
-    inner: CustomerCore,
-}
-
-#[pymethods]
-impl PyCustomerCore {
-    #[staticmethod]
-    fn from_sources(
-    ) -> PyResult<Self> {
-        // Use singleton transform registry (lazy_static or once_cell)
-        // No registry needed - transforms are injected directly
-        let inner = CustomerCore::from_sources()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{:?}", e)))?;
-        Ok(Self { inner })
-    }
-
-    fn to_dict(&self, py: Python) -> PyResult<PyObject> {
-        let dict = pyo3::types::PyDict::new(py);
-        for (key, value) in self.inner.to_dict() {
-            let py_value = match value {
-                serde_json::Value::String(s) => s.into_py(py),
-                serde_json::Value::Number(n) => {
-                    if let Some(i) = n.as_i64() {
-                        i.into_py(py)
-                    } else if let Some(f) = n.as_f64() {
-                        f.into_py(py)
-                    } else {
-                        n.to_string().into_py(py)
-                    }
-                },
-                serde_json::Value::Bool(b) => b.into_py(py),
-                serde_json::Value::Array(arr) => {
-                    let list: Vec<String> = arr.iter()
-                        .map(|v| v.as_str().unwrap_or("").to_string())
-                        .collect();
-                    list.into_py(py)
-                },
-                serde_json::Value::Null => py.None(),
-                serde_json::Value::Object(_) => py.None(), // Skip nested objects
-            };
-            dict.set_item(key, py_value)?;
-        }
-        Ok(dict.into())
-    }
-
-    fn to_json(&self) -> PyResult<String> {
-        self.inner.to_json()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("JSON error: {:?}", e)))
-    }
-
-    fn __getattr__(&self, py: Python, name: &str) -> PyResult<PyObject> {
-        let dict = self.inner.to_dict();
-        match dict.get(name) {
-            Some(value) => {
-                let py_value = match value {
-                    serde_json::Value::String(s) => s.clone().into_py(py),
-                    serde_json::Value::Number(n) => {
-                        if let Some(i) = n.as_i64() {
-                            i.into_py(py)
-                        } else if let Some(f) = n.as_f64() {
-                            f.into_py(py)
-                        } else {
-                            n.to_string().into_py(py)
-                        }
-                    },
-                    serde_json::Value::Bool(b) => b.into_py(py),
-                    serde_json::Value::Array(arr) => {
-                        let list: Vec<String> = arr.iter()
-                            .map(|v| v.as_str().unwrap_or("").to_string())
-                            .collect();
-                        list.into_py(py)
-                    },
-                    serde_json::Value::Null => py.None(),
-                    serde_json::Value::Object(_) => py.None(), // Skip nested objects
-                };
-                Ok(py_value)
-            }
-            None => Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
-                format!("'CustomerCore' object has no attribute '{}'", name)
-            ))
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!("CustomerCore({:?})", self.inner.to_dict())
-    }
-}
-
 #[pyclass(name = "ProductCore")]
 #[derive(Clone)]
 pub struct PyProductCore {
@@ -386,12 +296,102 @@ impl PyProductCore {
     }
 }
 
+#[pyclass(name = "CustomerCore")]
+#[derive(Clone)]
+pub struct PyCustomerCore {
+    inner: CustomerCore,
+}
+
+#[pymethods]
+impl PyCustomerCore {
+    #[staticmethod]
+    fn from_sources(
+    ) -> PyResult<Self> {
+        // Use singleton transform registry (lazy_static or once_cell)
+        // No registry needed - transforms are injected directly
+        let inner = CustomerCore::from_sources()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{:?}", e)))?;
+        Ok(Self { inner })
+    }
+
+    fn to_dict(&self, py: Python) -> PyResult<PyObject> {
+        let dict = pyo3::types::PyDict::new(py);
+        for (key, value) in self.inner.to_dict() {
+            let py_value = match value {
+                serde_json::Value::String(s) => s.into_py(py),
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        i.into_py(py)
+                    } else if let Some(f) = n.as_f64() {
+                        f.into_py(py)
+                    } else {
+                        n.to_string().into_py(py)
+                    }
+                },
+                serde_json::Value::Bool(b) => b.into_py(py),
+                serde_json::Value::Array(arr) => {
+                    let list: Vec<String> = arr.iter()
+                        .map(|v| v.as_str().unwrap_or("").to_string())
+                        .collect();
+                    list.into_py(py)
+                },
+                serde_json::Value::Null => py.None(),
+                serde_json::Value::Object(_) => py.None(), // Skip nested objects
+            };
+            dict.set_item(key, py_value)?;
+        }
+        Ok(dict.into())
+    }
+
+    fn to_json(&self) -> PyResult<String> {
+        self.inner.to_json()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("JSON error: {:?}", e)))
+    }
+
+    fn __getattr__(&self, py: Python, name: &str) -> PyResult<PyObject> {
+        let dict = self.inner.to_dict();
+        match dict.get(name) {
+            Some(value) => {
+                let py_value = match value {
+                    serde_json::Value::String(s) => s.clone().into_py(py),
+                    serde_json::Value::Number(n) => {
+                        if let Some(i) = n.as_i64() {
+                            i.into_py(py)
+                        } else if let Some(f) = n.as_f64() {
+                            f.into_py(py)
+                        } else {
+                            n.to_string().into_py(py)
+                        }
+                    },
+                    serde_json::Value::Bool(b) => b.into_py(py),
+                    serde_json::Value::Array(arr) => {
+                        let list: Vec<String> = arr.iter()
+                            .map(|v| v.as_str().unwrap_or("").to_string())
+                            .collect();
+                        list.into_py(py)
+                    },
+                    serde_json::Value::Null => py.None(),
+                    serde_json::Value::Object(_) => py.None(), // Skip nested objects
+                };
+                Ok(py_value)
+            }
+            None => Err(PyErr::new::<pyo3::exceptions::PyAttributeError, _>(
+                format!("'CustomerCore' object has no attribute '{}'", name)
+            ))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("CustomerCore({:?})", self.inner.to_dict())
+    }
+}
+
 /// Register all Rust entities with the Python module
 pub fn register_all_entities(m: &PyModule) -> PyResult<()> {
     m.add_class::<PyOrderLineItemCore>()?;
-    m.add_class::<PyOrderCore>()?;
-    m.add_class::<PyCustomerCore>()?;
     m.add_class::<PyProductCore>()?;
+    m.add_class::<PyCustomerCore>()?;
+    m.add_class::<PyOrderCore>()?;
     Ok(())
 }
 

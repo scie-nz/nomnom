@@ -12,7 +12,7 @@ doctest = false
 
 [[bin]]
 name = "hl7-parser"
-path = "rust_build/src/bin/record_parser.rs"
+path = "rust_build/src/bin/hl7_parser.rs"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
@@ -27,11 +27,10 @@ sha2 = "0.10"
 regex = "1.10"
 
 # Diesel ORM with connection pooling
-diesel = { version = "2.3", features = ["postgres", "sqlite", "r2d2", "chrono", "numeric"] }
+diesel = { version = "2.1", features = ["mysql", "sqlite", "r2d2", "chrono"] }
 diesel_migrations = "2.1"
 r2d2 = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
-bigdecimal = { version = "0.4", features = ["serde"] }
 
 # Nomnom entity framework (runtime with python-bridge feature)
 nomnom = { path = "../../..", features = ["python-bridge"] }

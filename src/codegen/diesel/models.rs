@@ -16,6 +16,8 @@ struct PrimaryKeyConfig {
     name: String,
     #[serde(rename = "type")]
     key_type: String,
+    #[serde(default)]
+    autogenerate: bool,
 }
 
 #[derive(Deserialize)]

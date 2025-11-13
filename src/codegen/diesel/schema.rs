@@ -17,6 +17,8 @@ struct PrimaryKeyConfig {
     name: String,
     #[serde(rename = "type")]
     key_type: String,
+    #[serde(default)]
+    autogenerate: bool,
 }
 
 #[derive(Deserialize)]
@@ -75,9 +77,12 @@ pub fn generate_schema(
     for entity in entities {
         // Read the entity YAML file to get persistence section
         let yaml_path = format!("{}/{}.yaml", config_dir, entity.name.to_lowercase());
+        eprintln!("DEBUG: Generating Diesel schema for entity: {}", entity.name);
         if let Ok(yaml_content) = std::fs::read_to_string(&yaml_path) {
+            eprintln!("DEBUG: YAML file {} contains persistence keyword", yaml_path);
             if let Ok(yaml) = serde_yaml::from_str::<EntityWrapper>(&yaml_content) {
                 if let Some(persistence) = yaml.entity.persistence {
+                    eprintln!("  Has primary_key: {}", persistence.primary_key.is_some());
                     if let Some(db_config) = persistence.database {
                         // Generate table! macro for conformant table
                         writeln!(output, "\ndiesel::table! {{")?;
