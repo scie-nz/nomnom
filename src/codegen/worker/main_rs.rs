@@ -450,6 +450,8 @@ fn generate_derived_entity_extraction(
     derived_entity: &EntityDef,
     root_entity: &EntityDef,
 ) -> Result<(), Box<dyn Error>> {
+    use std::collections::HashMap;
+
     let persistence = derived_entity.persistence.as_ref().unwrap();
     let db_config = persistence.database.as_ref().unwrap();
     let table_name = &db_config.conformant_table;
@@ -461,20 +463,32 @@ fn generate_derived_entity_extraction(
     // TODO: Add support for repeating derived entities (e.g., from DG1_segments)
     writeln!(output, "    // Extract fields from root entity data")?;
 
+    // Build a map of field names to their definitions in the full entity
+    let field_defs: HashMap<String, &crate::codegen::types::FieldDef> =
+        derived_entity.fields.iter()
+            .map(|f| (f.name.clone(), f))
+            .collect();
+
     // Generate field extraction for each field in derived entity
     for field in fields {
         let field_name = &field.name;
-        let field_type_str = field.field_type.as_deref().unwrap_or("String");
         let is_nullable = field.nullable.unwrap_or(false);
 
-        // Simple extraction from root message fields (if they exist)
-        // This is a simplified version - in reality, we'd need to trace through
-        // the computed_from configurations to extract from parent entities
+        // Try to find the field definition to get computed_from information
+        if let Some(field_def) = field_defs.get(field_name) {
+            if let Some(ref computed_from) = field_def.computed_from {
+                // Generate extraction code based on computed_from configuration
+                generate_field_extraction(output, field_name, computed_from, root_entity, is_nullable)?;
+                continue;
+            }
+        }
+
+        // Fallback: if no computed_from, use placeholder
         if is_nullable {
-            writeln!(output, "    let {} = None; // TODO: Extract from parent entities",
+            writeln!(output, "    let {} = None; // No computed_from configuration",
                 field_name)?;
         } else {
-            writeln!(output, "    let {} = String::new(); // TODO: Extract from parent entities",
+            writeln!(output, "    let {} = String::new(); // No computed_from configuration",
                 field_name)?;
         }
     }
@@ -531,6 +545,114 @@ fn generate_derived_entity_extraction(
     writeln!(output)?;
 
     Ok(())
+}
+
+/// Generate field extraction code based on computed_from configuration
+fn generate_field_extraction(
+    output: &mut std::fs::File,
+    field_name: &str,
+    computed_from: &crate::codegen::types::ComputedFrom,
+    root_entity: &EntityDef,
+    is_nullable: bool,
+) -> Result<(), Box<dyn Error>> {
+    let transform = &computed_from.transform;
+    let sources = &computed_from.sources;
+
+    // For simple cases, generate direct extraction from root message fields
+    // This handles: copy_field, extract_filename_component, etc.
+
+    if transform == "copy_field" && sources.len() == 1 {
+        // Direct copy from source field
+        let source = &sources[0];
+        let source_entity = source.source_name();
+        let source_field = source.field_name();
+
+        if let Some(src_field) = source_field {
+            if source_entity == root_entity.name.as_str() {
+                // Direct access from root message
+                writeln!(output, "    let {} = {}msg.{}.clone();",
+                    field_name,
+                    if is_nullable { "Some(" } else { "" },
+                    src_field)?;
+                if is_nullable {
+                    writeln!(output, "    // Close Some()")?;
+                }
+            } else {
+                // Need to extract from intermediate entity - not yet implemented
+                writeln!(output, "    let {} = {}; // TODO: Extract from {} -> {}",
+                    field_name,
+                    if is_nullable { "None" } else { "String::new()" },
+                    source_entity,
+                    src_field)?;
+            }
+        } else {
+            writeln!(output, "    let {} = {}; // TODO: Direct source reference",
+                field_name,
+                if is_nullable { "None" } else { "String::new()" })?;
+        }
+    } else if sources.len() == 1 {
+        // Transform function with arguments
+        let source = &sources[0];
+        let source_entity = source.source_name();
+        let source_field = source.field_name();
+
+        // Generate transform function call
+        let args_str = if let Some(ref args) = computed_from.args {
+            format_transform_args(args)
+        } else {
+            String::new()
+        };
+
+        if let Some(src_field) = source_field {
+            if source_entity == root_entity.name.as_str() {
+                // Call transform with root message field
+                writeln!(output, "    let {} = {}(&msg.{}{}).ok();",
+                    field_name,
+                    transform,
+                    src_field,
+                    if !args_str.is_empty() { format!(", {}", args_str) } else { String::new() })?;
+            } else {
+                writeln!(output, "    let {} = {}; // TODO: Transform from {} -> {}",
+                    field_name,
+                    if is_nullable { "None" } else { "String::new()" },
+                    source_entity,
+                    src_field)?;
+            }
+        } else {
+            writeln!(output, "    let {} = {}; // TODO: Transform with direct source",
+                field_name,
+                if is_nullable { "None" } else { "String::new()" })?;
+        }
+    } else {
+        // Multiple sources - not yet implemented
+        writeln!(output, "    let {} = {}; // TODO: Multi-source extraction",
+            field_name,
+            if is_nullable { "None" } else { "String::new()" })?;
+    }
+
+    Ok(())
+}
+
+/// Format transform function arguments from YAML value
+fn format_transform_args(args: &serde_yaml::Value) -> String {
+    match args {
+        serde_yaml::Value::Mapping(map) => {
+            map.iter()
+                .map(|(k, v)| {
+                    let key = k.as_str().unwrap_or("");
+                    let val = match v {
+                        serde_yaml::Value::String(s) => format!("\"{}\"", s),
+                        serde_yaml::Value::Number(n) => n.to_string(),
+                        serde_yaml::Value::Bool(b) => b.to_string(),
+                        _ => "/* unsupported */".to_string(),
+                    };
+                    format!("{}: {}", key, val)
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+        _ => String::new(),
+    }
 }
 
 /// Map field types to Diesel SQL types
