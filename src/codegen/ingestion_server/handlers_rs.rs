@@ -206,8 +206,8 @@ fn generate_health_check_handler(
 
     writeln!(output, "    let entities = vec![")?;
     for entity in entities {
-        // Only include root entities that are persistent
-        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
+        // Only include root entities (transient or persistent)
+        if !entity.is_root() || entity.is_abstract {
             continue;
         }
         if entity.source_type.to_lowercase() == "reference" {
