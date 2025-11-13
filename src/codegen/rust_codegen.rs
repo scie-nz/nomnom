@@ -201,7 +201,7 @@ pub fn generate_rust_code<W: Write>(
 
     // Generate each entity
     for entity in entities {
-        generate_entity(writer, entity, config)?;
+        generate_entity(writer, entity, entities, config)?;
     }
 
     Ok(())
@@ -211,6 +211,7 @@ pub fn generate_rust_code<W: Write>(
 fn generate_entity<W: Write>(
     writer: &mut W,
     entity: &EntityDef,
+    all_entities: &[EntityDef],
     config: &RustCodegenConfig,
 ) -> Result<(), std::io::Error> {
     // Determine core name (add "Core" suffix for consistency)
@@ -223,12 +224,12 @@ fn generate_entity<W: Write>(
     // Generate impl block based on entity type (skip for abstract entities)
     if !entity.is_abstract {
         if entity.is_root() {
-            generate_root_impl(writer, entity, &core_name, config)?;
+            generate_root_impl(writer, entity, &core_name, all_entities, config)?;
         } else if entity.is_derived() {
             if entity.repeated_for.is_some() {
-                generate_repeated_impl(writer, entity, &core_name, config)?;
+                generate_repeated_impl(writer, entity, &core_name, all_entities, config)?;
             } else {
-                generate_derived_impl(writer, entity, &core_name, config)?;
+                generate_derived_impl(writer, entity, &core_name, all_entities, config)?;
             }
         }
     }
@@ -280,6 +281,7 @@ fn generate_root_impl<W: Write>(
     writer: &mut W,
     entity: &EntityDef,
     struct_name: &str,
+    all_entities: &[EntityDef],
     _config: &RustCodegenConfig,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "impl {} {{", struct_name)?;
@@ -304,7 +306,7 @@ fn generate_root_impl<W: Write>(
         for field in &entity.fields {
             if let Some(ref computed) = field.computed_from {
                 // Field computed via transform
-                generate_field_extraction(writer, field, computed, "        ")?;
+                generate_field_extraction(writer, entity, field, computed, all_entities, "        ")?;
             } else if field.root_source.is_some() {
                 // Field sourced from raw_input
                 writeln!(writer, "        // Field '{}' from root source", field.name)?;
@@ -341,6 +343,7 @@ fn generate_derived_impl<W: Write>(
     writer: &mut W,
     entity: &EntityDef,
     struct_name: &str,
+    all_entities: &[EntityDef],
     _config: &RustCodegenConfig,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "impl {} {{", struct_name)?;
@@ -377,7 +380,7 @@ fn generate_derived_impl<W: Write>(
         // Generate field extraction for each field with computed_from
         for field in &entity.fields {
             if let Some(ref computed) = field.computed_from {
-                generate_field_extraction(writer, field, computed, "        ")?;
+                generate_field_extraction(writer, entity, field, computed, all_entities, "        ")?;
             }
         }
 
@@ -404,6 +407,7 @@ fn generate_repeated_impl<W: Write>(
     writer: &mut W,
     entity: &EntityDef,
     struct_name: &str,
+    all_entities: &[EntityDef],
     _config: &RustCodegenConfig,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "impl {} {{", struct_name)?;
@@ -434,7 +438,7 @@ fn generate_repeated_impl<W: Write>(
         // Generate field extraction for each field (indent by 12 spaces)
         for field in &entity.fields {
             if let Some(ref computed) = field.computed_from {
-                generate_field_extraction(writer, field, computed, "            ")?;
+                generate_field_extraction(writer, entity, field, computed, all_entities, "            ")?;
             }
         }
 
@@ -499,8 +503,10 @@ fn generate_serialization_methods<W: Write>(
 /// Generate field extraction code
 fn generate_field_extraction<W: Write>(
     writer: &mut W,
+    current_entity: &EntityDef,
     field: &FieldDef,
     computed: &ComputedFrom,
+    all_entities: &[EntityDef],
     indent: &str,
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "{}// Extract field: {}", indent, field.name)?;
@@ -566,8 +572,22 @@ fn generate_field_extraction<W: Write>(
         };
 
         if let Some(field_name) = source.field_name() {
-            // Parent field reference: pass the field value as reference
-            call_args.push(format!("&{}.{}", source_var, field_name));
+            // Parent field reference: check if the source field is optional
+            let source_entity_name = match source {
+                crate::codegen::types::FieldSource::Parent { source, .. } => source.as_str(),
+                _ => "",
+            };
+
+            let is_optional = is_source_field_optional(source_entity_name, field_name, all_entities);
+
+            if is_optional {
+                // Source field is Option<T> - we need to unwrap it
+                // Use a placeholder variable name that will be replaced by unwrap logic
+                call_args.push(format!("__OPT_{}_{}__", source_var, field_name));
+            } else {
+                // Source field is not optional - pass as reference directly
+                call_args.push(format!("&{}.{}", source_var, field_name));
+            }
         } else {
             // Direct source reference: pass the iterator variable directly
             // For repeated_for patterns, the iterator variable (e.g., `item`) is already a reference
@@ -599,18 +619,76 @@ fn generate_field_extraction<W: Write>(
         }
     }
 
-    // Generate the function call
-    let args_str = call_args.join(", ");
-    writeln!(
-        writer,
-        "{}let {} = {}({})",
-        indent, field.name, computed.transform, args_str
-    )?;
-    writeln!(
-        writer,
-        "{}    .map_err(|e| format!(\"Failed to extract '{}': {{}}\", e))?;",
-        indent, field.name
-    )?;
+    // Check if any arguments are optional placeholders
+    let has_optional = call_args.iter().any(|arg| arg.starts_with("__OPT_"));
+
+    if has_optional {
+        // Generate if-let unwrapping code for optional sources
+        // Collect all optional sources
+        let mut optional_bindings = Vec::new();
+        let mut unwrapped_args = Vec::new();
+
+        for arg in &call_args {
+            if arg.starts_with("__OPT_") {
+                // Parse the placeholder: __OPT_{var}_{field}__
+                let inner = arg.trim_start_matches("__OPT_").trim_end_matches("__");
+                let parts: Vec<&str> = inner.split('_').collect();
+                if parts.len() >= 2 {
+                    let last_idx = parts.len() - 1;
+                    let field_name = parts[last_idx];
+                    let var_parts = &parts[..last_idx];
+                    let var_name = var_parts.join("_");
+
+                    let binding_name = format!("{}_val", inner.replace("_", "_"));
+                    optional_bindings.push((var_name.clone(), field_name.to_string(), binding_name.clone()));
+                    unwrapped_args.push(format!("{}", binding_name));
+                }
+            } else {
+                unwrapped_args.push(arg.clone());
+            }
+        }
+
+        // Generate if-let pattern for optional unwrapping
+        if !optional_bindings.is_empty() {
+            write!(writer, "{}let {} = if let ", indent, field.name)?;
+            for (i, (var, field, binding)) in optional_bindings.iter().enumerate() {
+                if i > 0 {
+                    write!(writer, " && let ")?;
+                }
+                write!(writer, "Some(ref {}) = {}.{}", binding, var, field)?;
+            }
+            writeln!(writer, " {{")?;
+
+            // Inside the if-let: call the transform
+            let unwrapped_str = unwrapped_args.join(", ");
+            writeln!(
+                writer,
+                "{}    {}({})",
+                indent, computed.transform, unwrapped_str
+            )?;
+            writeln!(
+                writer,
+                "{}        .map_err(|e| format!(\"Failed to extract '{}': {{}}\", e))?",
+                indent, field.name
+            )?;
+            writeln!(writer, "{}}} else {{", indent)?;
+            writeln!(writer, "{}    None", indent)?;
+            writeln!(writer, "{}}};", indent)?;
+        }
+    } else {
+        // No optional sources - generate simple function call
+        let args_str = call_args.join(", ");
+        writeln!(
+            writer,
+            "{}let {} = {}({})",
+            indent, field.name, computed.transform, args_str
+        )?;
+        writeln!(
+            writer,
+            "{}    .map_err(|e| format!(\"Failed to extract '{}': {{}}\", e))?;",
+            indent, field.name
+        )?;
+    }
 
     Ok(())
 }
@@ -645,6 +723,23 @@ fn map_field_type(field_type: &str, nullable: bool) -> String {
     } else {
         base_type
     }
+}
+
+/// Helper function to check if a source field is Optional
+fn is_source_field_optional(
+    source_entity_name: &str,
+    source_field_name: &str,
+    all_entities: &[EntityDef],
+) -> bool {
+    // Find the source entity
+    if let Some(source_entity) = all_entities.iter().find(|e| e.name == source_entity_name) {
+        // Find the field in the source entity
+        if let Some(source_field) = source_entity.fields.iter().find(|f| f.name == source_field_name) {
+            // Check if the field is nullable
+            return source_field.nullable;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
