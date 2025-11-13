@@ -32,7 +32,7 @@ pub fn generate_nats_client_rs(output_dir: &Path) -> Result<(), Box<dyn Error>> 
     writeln!(file, "            stream_name: std::env::var(\"NATS_STREAM\")")?;
     writeln!(file, "                .unwrap_or_else(|_| \"MESSAGES\".to_string()),")?;
     writeln!(file, "            max_age: Duration::from_secs(24 * 60 * 60), // 24 hours")?;
-    writeln!(file, "            max_bytes: 1024 * 1024 * 1024, // 1GB")?;
+    writeln!(file, "            max_bytes: 100 * 1024 * 1024, // 100MB")?;
     writeln!(file, "        }}")?;
     writeln!(file, "    }}")?;
     writeln!(file, "}}")?;
@@ -76,7 +76,7 @@ pub fn generate_nats_client_rs(output_dir: &Path) -> Result<(), Box<dyn Error>> 
     writeln!(file, "                name: dlq_stream_name.clone(),")?;
     writeln!(file, "                subjects: vec![\"messages.dlq.>\".to_string()],")?;
     writeln!(file, "                max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days")?;
-    writeln!(file, "                max_bytes: 1024 * 1024 * 1024, // 1GB")?;
+    writeln!(file, "                max_bytes: 100 * 1024 * 1024, // 100MB")?;
     writeln!(file, "                storage: jetstream::stream::StorageType::File,")?;
     writeln!(file, "                num_replicas: 1,")?;
     writeln!(file, "                ..Default::default()")?;
