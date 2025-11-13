@@ -25,7 +25,7 @@ pub fn generate_handlers_rs(
     writeln!(output, "use uuid::Uuid;")?;
     writeln!(output, "use crate::{{")?;
     writeln!(output, "    database::DbPool,")?;
-    writeln!(output, "    models::{{IngestResponse, BatchResponse, HealthResponse}},")?;
+    writeln!(output, "    models::{{IngestRequest, IngestResponse, BatchResponse, HealthResponse}},")?;
     writeln!(output, "    parsers::{{MessageParser, ParsedMessage}},")?;
     writeln!(output, "    error::AppError,")?;
     writeln!(output, "    nats_client::NatsClient,")?;
@@ -67,7 +67,7 @@ fn generate_ingest_message_handler(
     writeln!(output, "#[utoipa::path(")?;
     writeln!(output, "    post,")?;
     writeln!(output, "    path = \"/ingest/message\",")?;
-    writeln!(output, "    request_body = String,")?;
+    writeln!(output, "    request_body = IngestRequest,")?;
     writeln!(output, "    responses(")?;
     writeln!(output, "        (status = 202, description = \"Message accepted for processing\", body = IngestionResponse),")?;
     writeln!(output, "        (status = 400, description = \"Invalid message format\")")?;
@@ -75,9 +75,23 @@ fn generate_ingest_message_handler(
     writeln!(output, ")]")?;
     writeln!(output, "pub async fn ingest_message(")?;
     writeln!(output, "    State(state): State<Arc<AppState>>,")?;
-    writeln!(output, "    body: String,")?;
+    writeln!(output, "    Json(request): Json<IngestRequest>,")?;
     writeln!(output, ") -> Result<(StatusCode, Json<IngestionResponse>), AppError> {{")?;
-    writeln!(output, "    eprintln!(\"[INGESTION-SERVER] Received message ({{}} bytes)\", body.len());\n")?;
+    writeln!(output, "    eprintln!(\"[INGESTION-SERVER] Received message (base64 {{}} bytes)\", request.body_base64.len());\n")?;
+
+    writeln!(output, "    // Decode base64 body")?;
+    writeln!(output, "    let body_bytes = base64::decode(&request.body_base64)")?;
+    writeln!(output, "        .map_err(|e| {{")?;
+    writeln!(output, "            eprintln!(\"[INGESTION-SERVER] Base64 decode error: {{}}\", e);")?;
+    writeln!(output, "            AppError::ValidationError(format!(\"Invalid base64: {{}}\", e))")?;
+    writeln!(output, "        }})?;")?;
+    writeln!(output, "    let body = String::from_utf8(body_bytes)")?;
+    writeln!(output, "        .map_err(|e| {{")?;
+    writeln!(output, "            eprintln!(\"[INGESTION-SERVER] UTF-8 decode error: {{}}\", e);")?;
+    writeln!(output, "            AppError::ValidationError(format!(\"Invalid UTF-8: {{}}\", e))")?;
+    writeln!(output, "        }})?;\n")?;
+
+    writeln!(output, "    eprintln!(\"[INGESTION-SERVER] Decoded message ({{}} bytes)\", body.len());\n")?;
 
     writeln!(output, "    // Optionally validate JSON format (but don't parse entities yet)")?;
     writeln!(output, "    let json_value: serde_json::Value = serde_json::from_str(&body)")?;
@@ -92,10 +106,12 @@ fn generate_ingest_message_handler(
     writeln!(output, "        eprintln!(\"[INGESTION-SERVER] Parsed JSON:\\n{{}}\", pretty);")?;
     writeln!(output, "    }}\n")?;
 
-    writeln!(output, "    // Extract entity_type hint if available (from JSON)")?;
-    writeln!(output, "    let entity_type = json_value.get(\"entity_type\")")?;
-    writeln!(output, "        .and_then(|t| t.as_str())")?;
-    writeln!(output, "        .map(String::from);\n")?;
+    writeln!(output, "    // Use entity_type from request or extract from JSON")?;
+    writeln!(output, "    let entity_type = request.entity_type.or_else(|| {{")?;
+    writeln!(output, "        json_value.get(\"entity_type\")")?;
+    writeln!(output, "            .and_then(|t| t.as_str())")?;
+    writeln!(output, "            .map(String::from)")?;
+    writeln!(output, "    }});\n")?;
 
     writeln!(output, "    if let Some(ref et) = entity_type {{")?;
     writeln!(output, "        eprintln!(\"[INGESTION-SERVER] Entity type hint: {{}}\", et);")?;

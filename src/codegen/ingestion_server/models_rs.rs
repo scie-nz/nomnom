@@ -14,6 +14,16 @@ pub fn generate_models_rs(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     writeln!(output, "use utoipa::ToSchema;")?;
     writeln!(output, "use chrono::{{DateTime, Utc}};\n")?;
 
+    // IngestRequest
+    writeln!(output, "/// Request for single message ingestion")?;
+    writeln!(output, "#[derive(Debug, Serialize, Deserialize, ToSchema)]")?;
+    writeln!(output, "pub struct IngestRequest {{")?;
+    writeln!(output, "    /// Base64-encoded JSON message body")?;
+    writeln!(output, "    pub body_base64: String,")?;
+    writeln!(output, "    /// Optional entity type hint")?;
+    writeln!(output, "    pub entity_type: Option<String>,")?;
+    writeln!(output, "}}\n")?;
+
     // IngestResponse
     writeln!(output, "/// Response from single message ingestion")?;
     writeln!(output, "#[derive(Debug, Serialize, Deserialize, ToSchema)]")?;

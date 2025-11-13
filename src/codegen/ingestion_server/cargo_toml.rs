@@ -26,7 +26,8 @@ pub fn generate_cargo_toml(
 
     writeln!(output, "# Serialization")?;
     writeln!(output, "serde = {{ version = \"1\", features = [\"derive\"] }}")?;
-    writeln!(output, "serde_json = \"1\"\n")?;
+    writeln!(output, "serde_json = \"1\"")?;
+    writeln!(output, "base64 = \"0.21\"\n")?;
 
     writeln!(output, "# Database")?;
     match config.database_type {

@@ -27,7 +27,8 @@ pub fn generate_main_rs(
     writeln!(output, "mod models;")?;
     writeln!(output, "mod database;")?;
     writeln!(output, "mod error;")?;
-    writeln!(output, "mod transforms;\n")?;
+    writeln!(output, "mod transforms;")?;
+    writeln!(output, "mod hl7utils;\n")?;
 
     writeln!(output, "use database::{{create_pool, ensure_tables}};")?;
     writeln!(output, "use parsers::{{MessageParser, ParsedMessage}};")?;
@@ -488,14 +489,33 @@ fn collect_entity_dependencies(
     ordered_list: &mut Vec<String>,
     seen: &mut std::collections::HashSet<String>,
 ) {
+    // Normalize entity name to lowercase for comparison
+    let entity_name_lower = entity_name.to_lowercase();
+
     // Skip if already processed or is the root entity
-    if seen.contains(entity_name) || entity_name == root_entity.name.as_str() {
+    if seen.contains(&entity_name_lower) || entity_name_lower == root_entity.name.to_lowercase() {
         return;
     }
 
-    // Find the entity definition
-    if let Some(entity) = all_entities.iter().find(|e| e.name == entity_name) {
-        // First, recursively process this entity's dependencies
+    // Find the entity definition (case-insensitive match)
+    if let Some(entity) = all_entities.iter().find(|e| e.name.eq_ignore_ascii_case(entity_name)) {
+        // First, process parent dependencies (for derived entities)
+        if let Some(ref parent_name) = entity.parent {
+            // Only process parent if it's not the root entity
+            let parent_is_root = parent_name.eq_ignore_ascii_case(&root_entity.name);
+            eprintln!("DEBUG: Entity {} has parent {}, is_root={}", entity_name, parent_name, parent_is_root);
+            if !parent_is_root {
+                collect_entity_dependencies(
+                    parent_name,
+                    all_entities,
+                    root_entity,
+                    ordered_list,
+                    seen
+                );
+            }
+        }
+
+        // Then, recursively process this entity's field dependencies
         for field in &entity.fields {
             if let Some(ref computed_from) = field.computed_from {
                 for source in &computed_from.sources {
@@ -511,9 +531,9 @@ fn collect_entity_dependencies(
             }
         }
 
-        // Then add this entity (after its dependencies)
-        seen.insert(entity_name.to_string());
-        ordered_list.push(entity_name.to_string());
+        // Then add this entity (after its dependencies) - use actual entity name, track lowercase
+        seen.insert(entity_name_lower);
+        ordered_list.push(entity.name.clone());
     }
 }
 
@@ -550,6 +570,56 @@ fn generate_derived_entity_extraction(
     let mut needed_entities: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
+    // Check if entity has parent field
+    if let Some(ref parent_name) = derived_entity.parent {
+        if !parent_name.eq_ignore_ascii_case(&root_entity.name) {
+            collect_entity_dependencies(
+                parent_name,
+                all_entities,
+                root_entity,
+                &mut needed_entities,
+                &mut seen
+            );
+        }
+    }
+
+    // Check if entity has derivation.source_entity (for multi-parent entities)
+    if let Some(ref derivation) = derived_entity.derivation {
+        if let Some(ref source_entities) = derivation.source_entities {
+            // Handle source_entity as string, array, or mapping
+            match source_entities {
+                serde_yaml::Value::String(s) => {
+                    if s.as_str() != root_entity.name.as_str() {
+                        collect_entity_dependencies(
+                            s.as_str(),
+                            all_entities,
+                            root_entity,
+                            &mut needed_entities,
+                            &mut seen
+                        );
+                    }
+                },
+                serde_yaml::Value::Mapping(map) => {
+                    // For mappings like {mpi: MPI, event_type: EventType}, collect all values
+                    for (_key, value) in map {
+                        if let serde_yaml::Value::String(entity_name) = value {
+                            if entity_name.as_str() != root_entity.name.as_str() {
+                                collect_entity_dependencies(
+                                    entity_name.as_str(),
+                                    all_entities,
+                                    root_entity,
+                                    &mut needed_entities,
+                                    &mut seen
+                                );
+                            }
+                        }
+                    }
+                },
+                _ => {} // Ignore other types
+            }
+        }
+    }
+
     // First pass: recursively collect all intermediate entities needed
     for field in fields {
         let field_name = &field.name;
@@ -580,7 +650,7 @@ fn generate_derived_entity_extraction(
             // For each field in the intermediate entity, generate extraction code
             for field in &intermediate_entity.fields {
                 if let Some(ref computed_from) = field.computed_from {
-                    let var_name = format!("{}_{}", entity_name.to_lowercase(), field.name);
+                    let var_name = format!("{}_{}", crate::codegen::utils::to_snake_case(entity_name), field.name);
                     generate_field_extraction(output, &var_name, computed_from, root_entity, &root_param_name, field.nullable)?;
                 }
             }
@@ -627,13 +697,20 @@ fn generate_derived_entity_extraction(
 
     // Build ON CONFLICT clause if unicity_fields exist
     let conflict_clause = if !db_config.unicity_fields.is_empty() {
-        format!("ON CONFLICT ({}) DO UPDATE SET {}",
-            db_config.unicity_fields.join(", "),
-            fields.iter()
-                .filter(|f| !db_config.unicity_fields.contains(&f.name))
-                .map(|f| format!("{} = EXCLUDED.{}", f.name.to_lowercase(), f.name.to_lowercase()))
-                .collect::<Vec<_>>()
-                .join(", "))
+        // Collect non-unicity fields for UPDATE clause
+        let update_fields: Vec<String> = fields.iter()
+            .filter(|f| !db_config.unicity_fields.contains(&f.name))
+            .map(|f| format!("{} = EXCLUDED.{}", f.name.to_lowercase(), f.name.to_lowercase()))
+            .collect();
+
+        // If all fields are unicity fields, just use DO NOTHING
+        if update_fields.is_empty() {
+            format!("ON CONFLICT ({}) DO NOTHING", db_config.unicity_fields.join(", "))
+        } else {
+            format!("ON CONFLICT ({}) DO UPDATE SET {}",
+                db_config.unicity_fields.join(", "),
+                update_fields.join(", "))
+        }
     } else {
         "ON CONFLICT DO NOTHING".to_string()
     };
@@ -701,7 +778,7 @@ fn generate_field_extraction(
                 }
             } else {
                 // Access from intermediate entity variable
-                let intermediate_var = format!("{}_{}", source_entity.to_lowercase(), src_field);
+                let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
                 writeln!(output, "    let {} = {}.clone();",
                     field_name,
                     intermediate_var)?;
@@ -748,7 +825,7 @@ fn generate_field_extraction(
                 }
             } else {
                 // Call transform with intermediate entity variable
-                let intermediate_var = format!("{}_{}", source_entity.to_lowercase(), src_field);
+                let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
 
                 // Check if the intermediate variable needs to be unwrapped (Option<String>)
                 // If it's Option<String>, we need to pass it as Option reference or unwrap

@@ -55,7 +55,8 @@ pub fn generate_cargo_toml(
 
     writeln!(output, "# Transform utilities")?;
     writeln!(output, "regex = \"1\"")?;
-    writeln!(output, "once_cell = \"1\"\n")?;
+    writeln!(output, "once_cell = \"1\"")?;
+    writeln!(output, "sha1 = \"0.10\"\n")?;
 
     Ok(())
 }
