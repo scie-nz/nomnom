@@ -53,5 +53,9 @@ pub fn generate_cargo_toml(
     writeln!(output, "# Environment")?;
     writeln!(output, "dotenv = \"0.15\"\n")?;
 
+    writeln!(output, "# Transform utilities")?;
+    writeln!(output, "regex = \"1\"")?;
+    writeln!(output, "once_cell = \"1\"\n")?;
+
     Ok(())
 }

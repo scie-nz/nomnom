@@ -80,10 +80,23 @@ fn generate_message_struct(
     writeln!(output, "pub struct {}Message {{", entity.name)?;
 
     if let Some(ref persistence) = entity.persistence {
+        // Persistent entities: use field_overrides from persistence config
         for field in &persistence.field_overrides {
             let field_type_str = field.field_type.as_deref().unwrap_or("String");
             let base_type = map_field_type(field_type_str);
             let rust_type = if field.nullable.unwrap_or(false) {
+                format!("Option<{}>", base_type)
+            } else {
+                base_type
+            };
+            writeln!(output, "    pub {}: {},", field.name, rust_type)?;
+        }
+    } else {
+        // Transient root entities: use fields from entity definition
+        for field in &entity.fields {
+            let field_type_str = &field.field_type;
+            let base_type = map_field_type(field_type_str);
+            let rust_type = if field.nullable {
                 format!("Option<{}>", base_type)
             } else {
                 base_type
@@ -171,19 +184,27 @@ fn generate_entity_parser(
     writeln!(output, "    fn parse_{}(obj: &serde_json::Map<String, serde_json::Value>) -> Result<{}Message, AppError> {{",
         entity.name.to_lowercase(), entity.name)?;
 
-    if let Some(ref persistence) = entity.persistence {
-        writeln!(output, "        Ok({}Message {{", entity.name)?;
+    writeln!(output, "        Ok({}Message {{", entity.name)?;
 
+    if let Some(ref persistence) = entity.persistence {
+        // Persistent entities: parse from field_overrides
         for field in &persistence.field_overrides {
             let field_type_str = field.field_type.as_deref().unwrap_or("String");
             let is_nullable = field.nullable.unwrap_or(false);
             let parse_expr = generate_json_parse_expression(field_type_str, &field.name, is_nullable);
             writeln!(output, "            {}: {},", field.name, parse_expr)?;
         }
-
-        writeln!(output, "        }})")?;
+    } else {
+        // Transient root entities: parse from entity fields
+        for field in &entity.fields {
+            let field_type_str = &field.field_type;
+            let is_nullable = field.nullable;
+            let parse_expr = generate_json_parse_expression(field_type_str, &field.name, is_nullable);
+            writeln!(output, "            {}: {},", field.name, parse_expr)?;
+        }
     }
 
+    writeln!(output, "        }})")?;
     writeln!(output, "    }}\n")?;
 
     Ok(())

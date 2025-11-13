@@ -652,27 +652,28 @@ fn generate_field_extraction(
                 } else {
                     format!("&{}.{}, {}", root_param_name, src_field, args_list.join(", "))
                 };
-                writeln!(output, "    let {} = {}({}).ok();",
+                // Handle Result<Option<T>> -> Option<T> by using .unwrap_or(None)
+                writeln!(output, "    let {} = {}({}).unwrap_or(None);",
                     field_name,
                     transform,
                     all_args)?;
             } else {
-                writeln!(output, "    let {} = {}; // TODO: Transform from {} -> {}",
+                writeln!(output, "    let {}: Option<String> = {}; // TODO: Transform from {} -> {}",
                     field_name,
-                    if is_nullable { "None" } else { "String::new()" },
+                    if is_nullable { "None" } else { "Some(String::new())" },
                     source_entity,
                     src_field)?;
             }
         } else {
-            writeln!(output, "    let {} = {}; // TODO: Transform with direct source",
+            writeln!(output, "    let {}: Option<String> = {}; // TODO: Transform with direct source",
                 field_name,
-                if is_nullable { "None" } else { "String::new()" })?;
+                if is_nullable { "None" } else { "Some(String::new())" })?;
         }
     } else {
         // Multiple sources - not yet implemented
-        writeln!(output, "    let {} = {}; // TODO: Multi-source extraction",
+        writeln!(output, "    let {}: Option<String> = {}; // TODO: Multi-source extraction",
             field_name,
-            if is_nullable { "None" } else { "String::new()" })?;
+            if is_nullable { "None" } else { "Some(String::new())" })?;
     }
 
     Ok(())

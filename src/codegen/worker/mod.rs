@@ -64,6 +64,7 @@ pub fn generate_all(
     entities: &[EntityDef],
     output_dir: &Path,
     config: &WorkerConfig,
+    transforms: Option<&std::collections::HashMap<String, crate::codegen::project_config::RustTransformDef>>,
 ) -> Result<(), Box<dyn Error>> {
     // Create directory structure
     std::fs::create_dir_all(output_dir)?;
@@ -86,7 +87,7 @@ pub fn generate_all(
     generate_parsers_rs(entities, output_dir)?;
 
     println!("  ✓ Generating transforms.rs...");
-    generate_transforms_rs(output_dir)?;
+    generate_transforms_rs(output_dir, transforms)?;
 
     println!("  ✓ Generating models.rs...");
     generate_models_rs(output_dir)?;

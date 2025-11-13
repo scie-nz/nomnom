@@ -898,6 +898,46 @@ fn generate_worker(
 
     println!("  ✓ Loaded {} entities", entities.len());
 
+    // Try to load nomnom.yaml for transforms (optional)
+    // Look for nomnom.yaml in: entities parent dir, current dir, and entities_dir itself
+    let mut nomnom_yaml_candidates = vec![];
+
+    // Try parent of entities dir
+    if let Some(parent) = entities_dir.parent() {
+        nomnom_yaml_candidates.push(parent.join("nomnom.yaml"));
+    }
+
+    // Try current directory
+    nomnom_yaml_candidates.push(PathBuf::from("nomnom.yaml"));
+
+    // Try entities dir itself
+    nomnom_yaml_candidates.push(entities_dir.join("nomnom.yaml"));
+
+    let nomnom_yaml = nomnom_yaml_candidates.iter()
+        .find(|path| path.exists())
+        .cloned();
+
+    let transforms = if let Some(nomnom_yaml_path) = nomnom_yaml {
+        println!("📋 Loading transforms from {}...", nomnom_yaml_path.display());
+        match nomnom::codegen::project_config::BuildConfig::from_file(&nomnom_yaml_path) {
+            Ok(config) => {
+                let transform_count = config.transforms.as_ref()
+                    .map(|t| t.rust.len())
+                    .unwrap_or(0);
+                println!("  ✓ Loaded {} custom transforms", transform_count);
+                config.transforms.map(|t| t.rust)
+            }
+            Err(e) => {
+                println!("  ⚠ Warning: Failed to load nomnom.yaml: {}", e);
+                println!("  ℹ Continuing without custom transforms...");
+                None
+            }
+        }
+    } else {
+        println!("  ℹ No nomnom.yaml found, generating without custom transforms");
+        None
+    };
+
     // Count persistent entities
     let persistent_count = entities.iter()
         .filter(|e| e.is_persistent() && !e.is_abstract && e.source_type.to_lowercase() != "reference")
@@ -948,6 +988,7 @@ fn generate_worker(
         &entities,
         &output,
         &config,
+        transforms.as_ref(),
     ).map_err(|e| format!("Worker generation failed: {}", e))?;
 
     println!("\n✨ Worker binary generated successfully!");
