@@ -20,32 +20,33 @@ pub fn generate_parsers_rs(
     writeln!(output, "use rust_decimal::Decimal;")?;
     writeln!(output, "use std::str::FromStr;\n")?;
 
-    // Generate ParsedMessage enum (only for root entities)
+    // Generate ParsedMessage enum (for root entities AND non-root persistent entities)
     writeln!(output, "#[derive(Debug)]")?;
     writeln!(output, "pub enum ParsedMessage {{")?;
     for entity in entities {
-        // Only include root entities that are persistent
-        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
-            continue;
+        // Include root entities AND non-root persistent entities
+        // Root entities are the entry point for messages
+        // Non-root persistent entities may need to be parsed from JSON/message data
+        let include_entity = (entity.is_root() || entity.is_persistent())
+            && !entity.is_abstract
+            && entity.source_type.to_lowercase() != "reference";
+
+        if include_entity {
+            writeln!(output, "    {}({}Message),", entity.name, entity.name)?;
         }
-        if entity.source_type.to_lowercase() == "reference" {
-            continue;
-        }
-        writeln!(output, "    {}({}Message),", entity.name, entity.name)?;
     }
     writeln!(output, "}}\n")?;
 
-    // Generate message structs for each root entity
+    // Generate message structs for root entities AND non-root persistent entities
     for entity in entities {
-        // Only include root entities that are persistent
-        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
-            continue;
-        }
-        if entity.source_type.to_lowercase() == "reference" {
-            continue;
-        }
+        // Include root entities AND non-root persistent entities
+        let include_entity = (entity.is_root() || entity.is_persistent())
+            && !entity.is_abstract
+            && entity.source_type.to_lowercase() != "reference";
 
-        generate_message_struct(&mut output, entity)?;
+        if include_entity {
+            generate_message_struct(&mut output, entity)?;
+        }
     }
 
     // Generate MessageParser impl
@@ -55,17 +56,16 @@ pub fn generate_parsers_rs(
     // Main parse_line function
     generate_parse_line_function(&mut output, entities)?;
 
-    // Individual parser functions (only for root entities)
+    // Individual parser functions for root entities AND non-root persistent entities
     for entity in entities {
-        // Only include root entities that are persistent
-        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
-            continue;
-        }
-        if entity.source_type.to_lowercase() == "reference" {
-            continue;
-        }
+        // Include root entities AND non-root persistent entities
+        let include_entity = (entity.is_root() || entity.is_persistent())
+            && !entity.is_abstract
+            && entity.source_type.to_lowercase() != "reference";
 
-        generate_entity_parser(&mut output, entity)?;
+        if include_entity {
+            generate_entity_parser(&mut output, entity)?;
+        }
     }
 
     writeln!(output, "}}")?;
@@ -125,11 +125,12 @@ fn generate_parse_line_function(
     writeln!(output, "            match entity_type {{")?;
 
     for entity in entities {
-        // Only include root entities that are persistent
-        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
-            continue;
-        }
-        if entity.source_type.to_lowercase() == "reference" {
+        // Include root entities AND non-root persistent entities
+        let include_entity = (entity.is_root() || entity.is_persistent())
+            && !entity.is_abstract
+            && entity.source_type.to_lowercase() != "reference";
+
+        if !include_entity {
             continue;
         }
 
@@ -144,15 +145,26 @@ fn generate_parse_line_function(
     writeln!(output, "            }}")?;
     writeln!(output, "        }}\n")?;
 
-    // Generate fallback logic - try to parse as each root entity type
-    writeln!(output, "        // Fallback: Try to parse as each known root entity type")?;
+    // Generate fallback logic - try to parse as each entity type
+    // Prioritize root entities first, then non-root persistent entities
+    writeln!(output, "        // Fallback: Try to parse as each known entity type")?;
+    writeln!(output, "        // Try root entities first")?;
 
     for entity in entities {
-        // Only include root entities that are persistent
-        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
+        // Include root entities first
+        if !entity.is_root() || entity.is_abstract || entity.source_type.to_lowercase() == "reference" {
             continue;
         }
-        if entity.source_type.to_lowercase() == "reference" {
+
+        writeln!(output, "        if let Ok(msg) = Self::parse_{}(obj) {{", entity.name.to_lowercase())?;
+        writeln!(output, "            return Ok((\"{}\".to_string(), ParsedMessage::{}(msg), value.clone()));", entity.name, entity.name)?;
+        writeln!(output, "        }}")?;
+    }
+
+    writeln!(output, "\n        // Try non-root persistent entities")?;
+    for entity in entities {
+        // Include non-root persistent entities
+        if entity.is_root() || !entity.is_persistent() || entity.is_abstract || entity.source_type.to_lowercase() == "reference" {
             continue;
         }
 

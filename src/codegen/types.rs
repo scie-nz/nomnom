@@ -403,6 +403,48 @@ impl EntityDef {
     pub fn is_persistent(&self) -> bool {
         self.get_database_config().is_some()
     }
+
+    /// Check if this entity derives from the specified ancestor (directly or indirectly)
+    /// Used to build entity hierarchies for derived entity processing
+    pub fn derives_from(&self, ancestor_name: &str, all_entities: &[EntityDef]) -> bool {
+        // Get immediate parents
+        let parents = self.get_parents();
+
+        // Check if ancestor is an immediate parent
+        if parents.iter().any(|p| p == ancestor_name) {
+            return true;
+        }
+
+        // Recursively check if any parent derives from ancestor
+        for parent_name in parents {
+            if let Some(parent_entity) = all_entities.iter().find(|e| e.name == parent_name) {
+                if parent_entity.derives_from(ancestor_name, all_entities) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Find the field in a root entity that contains/generates this derived entity
+    /// Returns the field name if this entity is derived from a repeating field, None otherwise
+    pub fn find_source_field_in_root(&self, root_entity: &EntityDef) -> Option<String> {
+        // Check if this entity has a repeated_for config pointing to a field
+        if let Some(ref repeated_for) = self.repeated_for {
+            return Some(repeated_for.field.clone());
+        }
+
+        // Check if this derives from a parent that has a repeated_for
+        let parents = self.get_parents();
+        for parent_name in parents {
+            // Look for the parent's definition to check its source field
+            // This would need access to all entities, which we'll handle in the codegen
+            // For now, return None to indicate single-instance derivation
+        }
+
+        None
+    }
 }
 
 #[cfg(test)]

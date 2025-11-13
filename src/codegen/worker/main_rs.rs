@@ -281,29 +281,44 @@ pub fn generate_main_rs(
     writeln!(output, "    match parsed {{")?;
 
     for entity in entities {
-        // Only include root entities that are persistent
-        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
+        // Include root entities (persistent OR transient with derived persistent children)
+        if !entity.is_root() || entity.is_abstract {
             continue;
         }
         if entity.source_type.to_lowercase() == "reference" {
             continue;
         }
 
-        let db_config = entity.get_database_config().unwrap();
-        let table_name = &db_config.conformant_table;
+        // Check if this root entity has derived persistent entities
+        let derived_entities: Vec<&EntityDef> = entities.iter()
+            .filter(|e| {
+                e.is_persistent() &&
+                !e.is_root() &&
+                !e.is_abstract &&
+                e.source_type.to_lowercase() == "derived" &&
+                e.derives_from(&entity.name, entities)
+            })
+            .collect();
 
-        // Check if this is Order entity (hardcoded for now)
-        let is_order = entity.name == "Order";
+        let has_derived_entities = !derived_entities.is_empty();
+        let is_persistent = entity.is_persistent();
 
-        if is_order {
+        // Skip transient root entities that have no persistent derived children
+        if !is_persistent && !has_derived_entities {
+            continue;
+        }
+
+        if has_derived_entities || is_persistent {
             writeln!(output, "        ParsedMessage::{}(ref msg) => {{", entity.name)?;
         } else {
             writeln!(output, "        ParsedMessage::{}(msg) => {{", entity.name)?;
         }
 
-        // Get fields from persistence config
+        // Insert root entity if it's persistent
         if let Some(ref persistence) = entity.persistence {
             let fields = &persistence.field_overrides;
+            let db_config = entity.get_database_config().unwrap();
+            let table_name = &db_config.conformant_table;
 
             // Build column names list
             let col_names: Vec<String> = fields.iter()
@@ -339,14 +354,19 @@ pub fn generate_main_rs(
             writeln!(output)?;
         }
 
-        // If this is Order, process derived entities (OrderLineItems)
-        if is_order {
-            writeln!(output, "            // Process derived entities (OrderLineItems)")?;
-            writeln!(output, "            process_order_derived_entities(msg, &raw_json, &mut conn)?;")?;
+        // If this root entity has derived persistent entities, process them
+        if has_derived_entities {
+            writeln!(output, "            // Process derived persistent entities")?;
+            writeln!(output, "            process_{}_derived_entities(msg, &raw_json, &mut conn)?;",
+                entity.name.to_lowercase())?;
             writeln!(output)?;
         }
 
-        writeln!(output, "            tracing::info!(\"Inserted {{}} message\", entity_name);\n")?;
+        if is_persistent {
+            writeln!(output, "            tracing::info!(\"Inserted {{}} message\", entity_name);\n")?;
+        } else {
+            writeln!(output, "            tracing::info!(\"Processed {{}} message (transient, derived entities persisted)\", entity_name);\n")?;
+        }
 
         writeln!(output, "            // Update status to 'completed'")?;
         writeln!(output, "            diesel::sql_query(")?;
@@ -377,108 +397,138 @@ fn generate_derived_entity_processors(
     output: &mut std::fs::File,
     entities: &[EntityDef],
 ) -> Result<(), Box<dyn Error>> {
-    // Check if Order entity exists (hardcoded for now)
-    let has_order = entities.iter().any(|e| e.name == "Order" && e.is_root() && e.is_persistent());
+    // Find all root entities (persistent OR transient)
+    for root_entity in entities.iter().filter(|e| e.is_root()) {
 
-    if !has_order {
-        return Ok(());
+        // Find derived persistent entities for this root
+        let derived_entities: Vec<&EntityDef> = entities.iter()
+            .filter(|e| {
+                e.is_persistent() &&
+                !e.is_root() &&
+                !e.is_abstract &&
+                e.source_type.to_lowercase() == "derived" &&
+                e.derives_from(&root_entity.name, entities)
+            })
+            .collect();
+
+        // Only generate processor function if there are derived persistent entities
+        if derived_entities.is_empty() {
+            continue;
+        }
+
+        // Generate processor function for this root entity
+        writeln!(output)?;
+        writeln!(output, "/// Process derived entities for {} ({} entities)",
+            root_entity.name,
+            derived_entities.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", "))?;
+        writeln!(output, "fn process_{}_derived_entities(",
+            root_entity.name.to_lowercase())?;
+        writeln!(output, "    {}: &parsers::{}Message,",
+            root_entity.name.to_lowercase(), root_entity.name)?;
+        writeln!(output, "    raw_json: &serde_json::Value,")?;
+        writeln!(output, "    conn: &mut diesel::PgConnection,")?;
+        writeln!(output, ") -> Result<(), AppError> {{")?;
+        writeln!(output, "    use transforms::*;")?;
+        writeln!(output)?;
+
+        // Process each derived entity
+        for derived_entity in &derived_entities {
+            generate_derived_entity_extraction(output, derived_entity, root_entity)?;
+        }
+
+        writeln!(output, "    tracing::info!(\"Processed derived entities for {}\");\n", root_entity.name)?;
+        writeln!(output, "    Ok(())")?;
+        writeln!(output, "}}")?;
+    }
+
+    Ok(())
+}
+
+/// Generate extraction and persistence logic for a single derived entity
+fn generate_derived_entity_extraction(
+    output: &mut std::fs::File,
+    derived_entity: &EntityDef,
+    root_entity: &EntityDef,
+) -> Result<(), Box<dyn Error>> {
+    let persistence = derived_entity.persistence.as_ref().unwrap();
+    let db_config = persistence.database.as_ref().unwrap();
+    let table_name = &db_config.conformant_table;
+    let fields = &persistence.field_overrides;
+
+    writeln!(output, "    // Process {} entities", derived_entity.name)?;
+
+    // For now, support simple single-entity extraction (not repeating)
+    // TODO: Add support for repeating derived entities (e.g., from DG1_segments)
+    writeln!(output, "    // Extract fields from root entity data")?;
+
+    // Generate field extraction for each field in derived entity
+    for field in fields {
+        let field_name = &field.name;
+        let field_type_str = field.field_type.as_deref().unwrap_or("String");
+        let is_nullable = field.nullable.unwrap_or(false);
+
+        // Simple extraction from root message fields (if they exist)
+        // This is a simplified version - in reality, we'd need to trace through
+        // the computed_from configurations to extract from parent entities
+        if is_nullable {
+            writeln!(output, "    let {} = None; // TODO: Extract from parent entities",
+                field_name)?;
+        } else {
+            writeln!(output, "    let {} = String::new(); // TODO: Extract from parent entities",
+                field_name)?;
+        }
     }
 
     writeln!(output)?;
-    writeln!(output, "/// Process derived entities for Order (OrderLineItems)")?;
-    writeln!(output, "fn process_order_derived_entities(")?;
-    writeln!(output, "    order: &parsers::OrderMessage,")?;
-    writeln!(output, "    raw_json: &serde_json::Value,")?;
-    writeln!(output, "    conn: &mut diesel::PgConnection,")?;
-    writeln!(output, ") -> Result<(), AppError> {{")?;
-    writeln!(output, "    use transforms::*;")?;
+
+    // Build column names list
+    let col_names: Vec<String> = fields.iter()
+        .map(|f| f.name.to_lowercase())
+        .collect();
+
+    // Build placeholder list ($1, $2, ...)
+    let placeholders: Vec<String> = (1..=col_names.len())
+        .map(|i| format!("${}", i))
+        .collect();
+
+    // Build ON CONFLICT clause if unicity_fields exist
+    let conflict_clause = if !db_config.unicity_fields.is_empty() {
+        format!("ON CONFLICT ({}) DO UPDATE SET {}",
+            db_config.unicity_fields.join(", "),
+            fields.iter()
+                .filter(|f| !db_config.unicity_fields.contains(&f.name))
+                .map(|f| format!("{} = EXCLUDED.{}", f.name.to_lowercase(), f.name.to_lowercase()))
+                .collect::<Vec<_>>()
+                .join(", "))
+    } else {
+        "ON CONFLICT DO NOTHING".to_string()
+    };
+
+    // Generate INSERT statement
+    writeln!(output, "    // Insert {} entity", derived_entity.name)?;
+    writeln!(output, "    diesel::sql_query(")?;
+    writeln!(output, "        r#\"INSERT INTO {} ({}) VALUES ({}) {}\"#",
+        table_name,
+        col_names.join(", "),
+        placeholders.join(", "),
+        conflict_clause)?;
+    writeln!(output, "    )")?;
+
+    // Bind each field
+    for field in fields {
+        let field_type_str = field.field_type.as_deref().unwrap_or("String");
+        let diesel_type = map_to_diesel_type(field_type_str);
+        let is_nullable = field.nullable.unwrap_or(false);
+
+        if is_nullable {
+            writeln!(output, "    .bind::<Nullable<{}>, _>(&{})", diesel_type, field.name)?;
+        } else {
+            writeln!(output, "    .bind::<{}, _>(&{})", diesel_type, field.name)?;
+        }
+    }
+
+    writeln!(output, "    .execute(conn)?;")?;
     writeln!(output)?;
-    writeln!(output, "    // Get line_items array from raw JSON")?;
-    writeln!(output, "    let line_items = match raw_json.get(\"line_items\").and_then(|v| v.as_array()) {{")?;
-    writeln!(output, "        Some(items) => items,")?;
-    writeln!(output, "        None => {{")?;
-    writeln!(output, "            tracing::debug!(\"No line_items array found in Order message\");")?;
-    writeln!(output, "            return Ok(()); // Not an error if no line items")?;
-    writeln!(output, "        }}")?;
-    writeln!(output, "    }};")?;
-    writeln!(output)?;
-    writeln!(output, "    tracing::debug!(\"Processing {{}} line items for Order {{}}\", line_items.len(), order.order_key);")?;
-    writeln!(output)?;
-    writeln!(output, "    // Process each line item")?;
-    writeln!(output, "    for (index, item) in line_items.iter().enumerate() {{")?;
-    writeln!(output, "        // Extract fields using transform functions")?;
-    writeln!(output, "        let order_key = order.order_key.clone();")?;
-    writeln!(output)?;
-    writeln!(output, "        // Extract required fields with error handling")?;
-    writeln!(output, "        let line_number = match json_get_int(item, \"line_number\") {{")?;
-    writeln!(output, "            Ok(v) => v,")?;
-    writeln!(output, "            Err(e) => {{")?;
-    writeln!(output, "                tracing::warn!(\"Skipping line item at index {{}}: missing/invalid line_number: {{:?}}\", index, e);")?;
-    writeln!(output, "                continue;")?;
-    writeln!(output, "            }}")?;
-    writeln!(output, "        }};")?;
-    writeln!(output)?;
-    writeln!(output, "        let part_key = match json_get_string(item, \"part_key\") {{")?;
-    writeln!(output, "            Ok(v) => v,")?;
-    writeln!(output, "            Err(e) => {{")?;
-    writeln!(output, "                tracing::warn!(\"Skipping line item at index {{}}: missing/invalid part_key: {{:?}}\", index, e);")?;
-    writeln!(output, "                continue;")?;
-    writeln!(output, "            }}")?;
-    writeln!(output, "        }};")?;
-    writeln!(output)?;
-    writeln!(output, "        let quantity = match json_get_int(item, \"quantity\") {{")?;
-    writeln!(output, "            Ok(v) => v,")?;
-    writeln!(output, "            Err(e) => {{")?;
-    writeln!(output, "                tracing::warn!(\"Skipping line item at index {{}}: missing/invalid quantity: {{:?}}\", index, e);")?;
-    writeln!(output, "                continue;")?;
-    writeln!(output, "            }}")?;
-    writeln!(output, "        }};")?;
-    writeln!(output)?;
-    writeln!(output, "        let extended_price = match json_get_float(item, \"extended_price\") {{")?;
-    writeln!(output, "            Ok(v) => v,")?;
-    writeln!(output, "            Err(e) => {{")?;
-    writeln!(output, "                tracing::warn!(\"Skipping line item at index {{}}: missing/invalid extended_price: {{:?}}\", index, e);")?;
-    writeln!(output, "                continue;")?;
-    writeln!(output, "            }}")?;
-    writeln!(output, "        }};")?;
-    writeln!(output)?;
-    writeln!(output, "        // Extract optional fields")?;
-    writeln!(output, "        let supplier_key = json_get_optional_string(item, \"supplier_key\");")?;
-    writeln!(output, "        let discount = json_get_optional_float(item, \"discount\");")?;
-    writeln!(output, "        let tax = json_get_optional_float(item, \"tax\");")?;
-    writeln!(output, "        let return_flag = json_get_optional_string(item, \"return_flag\");")?;
-    writeln!(output, "        let line_status = json_get_optional_string(item, \"line_status\");")?;
-    writeln!(output, "        let ship_date = json_get_optional_string(item, \"ship_date\");")?;
-    writeln!(output, "        let commit_date = json_get_optional_string(item, \"commit_date\");")?;
-    writeln!(output, "        let receipt_date = json_get_optional_string(item, \"receipt_date\");")?;
-    writeln!(output)?;
-    writeln!(output, "        // Insert OrderLineItem")?;
-    writeln!(output, "        diesel::sql_query(")?;
-    writeln!(output, "            r#\"INSERT INTO order_line_items")?;
-    writeln!(output, "               (order_key, line_number, part_key, supplier_key, quantity, extended_price,")?;
-    writeln!(output, "                discount, tax, return_flag, line_status, ship_date, commit_date, receipt_date)")?;
-    writeln!(output, "               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)")?;
-    writeln!(output, "               ON CONFLICT (order_key, line_number) DO NOTHING\"#")?;
-    writeln!(output, "        )")?;
-    writeln!(output, "        .bind::<Text, _>(&order_key)")?;
-    writeln!(output, "        .bind::<Integer, _>(&line_number)")?;
-    writeln!(output, "        .bind::<Text, _>(&part_key)")?;
-    writeln!(output, "        .bind::<Nullable<Text>, _>(&supplier_key)")?;
-    writeln!(output, "        .bind::<Integer, _>(&quantity)")?;
-    writeln!(output, "        .bind::<Double, _>(&extended_price)")?;
-    writeln!(output, "        .bind::<Nullable<Double>, _>(&discount)")?;
-    writeln!(output, "        .bind::<Nullable<Double>, _>(&tax)")?;
-    writeln!(output, "        .bind::<Nullable<Text>, _>(&return_flag)")?;
-    writeln!(output, "        .bind::<Nullable<Text>, _>(&line_status)")?;
-    writeln!(output, "        .bind::<Nullable<Text>, _>(&ship_date)")?;
-    writeln!(output, "        .bind::<Nullable<Text>, _>(&commit_date)")?;
-    writeln!(output, "        .bind::<Nullable<Text>, _>(&receipt_date)")?;
-    writeln!(output, "        .execute(conn)?;")?;
-    writeln!(output, "    }}")?;
-    writeln!(output)?;
-    writeln!(output, "    tracing::info!(\"Inserted {{}} OrderLineItems for Order {{}}\", line_items.len(), order.order_key);")?;
-    writeln!(output, "    Ok(())")?;
-    writeln!(output, "}}")?;
 
     Ok(())
 }
