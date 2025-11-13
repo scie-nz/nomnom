@@ -1,0 +1,129 @@
+# Development values for kind/local Kubernetes testing
+# Override values.yaml defaults for local development
+
+global:
+  namespace: nomnom-dev
+  domain: localhost
+
+# NATS JetStream configuration for local development
+nats:
+  replicas: 1  # Single replica for dev
+  jetstream:
+    storage:
+      size: 1Gi  # Smaller storage for dev
+      storageClassName: standard
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+# PostgreSQL configuration for local development
+postgres:
+  storage:
+    size: 2Gi  # Smaller storage for dev
+    storageClassName: standard
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+  credentials:
+    user: nomnom
+    password: devpassword123  # Simple password for dev
+    database: nomnom
+
+# Ingestion API configuration for local development
+ingestion:
+  api:
+    enabled: true
+    replicas: 1  # Single replica for dev
+    image:
+      repository: localhost:5000/nomnom-ingestion-api  # Local registry
+      tag: latest
+      pullPolicy: Never  # Use local images
+    service:
+      type: NodePort  # NodePort for easy access in kind
+      port: 8080
+    autoscaling:
+      enabled: false  # Disable HPA for dev
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 50m
+      limits:
+        memory: 256Mi
+        cpu: 200m
+
+  # Worker configuration for local development
+  worker:
+    enabled: true
+    image:
+      repository: localhost:5000/nomnom-worker  # Local registry
+      tag: latest
+      pullPolicy: Never  # Use local images
+    env:
+      NATS_STREAM: "MESSAGES"
+      NATS_CONSUMER: "workers"
+      MAX_DELIVER: "3"
+      BATCH_SIZE: "5"  # Smaller batch for dev
+      POLL_INTERVAL_MS: "500"  # Slower polling for dev
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 50m
+      limits:
+        memory: 256Mi
+        cpu: 200m
+    keda:
+      enabled: false  # Disable KEDA for dev
+
+# Dashboard configuration for local development
+dashboard:
+  backend:
+    enabled: true
+    replicas: 1  # Single replica for dev
+    image:
+      repository: localhost:5000/nomnom-dashboard-backend  # Local registry
+      tag: latest
+      pullPolicy: Never  # Use local images
+    service:
+      type: NodePort  # NodePort for easy access
+      port: 3000
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 50m
+      limits:
+        memory: 256Mi
+        cpu: 200m
+
+  frontend:
+    enabled: true
+    replicas: 1  # Single replica for dev
+    image:
+      repository: localhost:5000/nomnom-dashboard-frontend  # Local registry
+      tag: latest
+      pullPolicy: Never  # Use local images
+    service:
+      type: NodePort  # NodePort for easy access
+      port: 80
+    resources:
+      requests:
+        memory: 64Mi
+        cpu: 25m
+      limits:
+        memory: 128Mi
+        cpu: 100m
+
+# Ingress configuration for local development
+ingress:
+  enabled: false  # Disable ingress for dev, use NodePort instead
+
+# KEDA configuration
+keda:
+  enabled: false  # Disable KEDA for dev

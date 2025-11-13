@@ -1,0 +1,19 @@
+apiVersion: v2
+name: nomnom
+description: A Helm chart for deploying nomnom ingestion pipeline with NATS JetStream, PostgreSQL, and real-time dashboards
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - data-ingestion
+  - nats
+  - jetstream
+  - postgres
+  - real-time
+  - dashboard
+maintainers:
+  - name: nomnom
+    email: noreply@example.com
+home: https://github.com/yourusername/nomnom
+sources:
+  - https://github.com/yourusername/nomnom

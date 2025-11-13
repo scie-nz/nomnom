@@ -1,0 +1,186 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }}.
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }} -n {{ .Values.global.namespace }}
+  $ helm get all {{ .Release.Name }} -n {{ .Values.global.namespace }}
+
+========================================
+NOMNOM Data Ingestion Pipeline
+========================================
+
+Components deployed:
+{{- if .Values.nats.enabled }}
+  ✓ NATS JetStream ({{ .Values.nats.replicas }} replicas)
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+  ✓ PostgreSQL Database
+{{- end }}
+{{- if .Values.ingestion.api.enabled }}
+  ✓ Ingestion API
+{{- end }}
+{{- if .Values.ingestion.worker.enabled }}
+  ✓ Message Workers
+{{- end }}
+{{- if .Values.dashboard.backend.enabled }}
+  ✓ Dashboard Backend
+{{- end }}
+{{- if .Values.dashboard.frontend.enabled }}
+  ✓ Dashboard Frontend
+{{- end }}
+
+========================================
+Access Information
+========================================
+
+{{- if .Values.ingestion.api.enabled }}
+
+1. Ingestion API:
+{{- if eq .Values.ingestion.api.service.type "NodePort" }}
+
+   Get the NodePort:
+   $ kubectl get svc {{ include "nomnom.ingestion-api.fullname" . }} -n {{ .Values.global.namespace }} -o jsonpath='{.spec.ports[0].nodePort}'
+
+   Access the API at:
+   http://<node-ip>:<node-port>
+{{- else if eq .Values.ingestion.api.service.type "LoadBalancer" }}
+
+   Get the LoadBalancer IP:
+   $ kubectl get svc {{ include "nomnom.ingestion-api.fullname" . }} -n {{ .Values.global.namespace }}
+
+   Access the API at:
+   http://<external-ip>:{{ .Values.ingestion.api.service.port }}
+{{- else }}
+
+   Port-forward to access locally:
+   $ kubectl port-forward -n {{ .Values.global.namespace }} svc/{{ include "nomnom.ingestion-api.fullname" . }} 8080:{{ .Values.ingestion.api.service.port }}
+
+   Access the API at:
+   http://localhost:8080
+{{- end }}
+
+   Health check endpoint:
+   GET /health
+
+   Ingest data endpoint:
+   POST /ingest/<entity_type>
+{{- end }}
+
+{{- if .Values.dashboard.frontend.enabled }}
+
+2. Dashboard Frontend:
+{{- if eq .Values.dashboard.frontend.service.type "NodePort" }}
+
+   Get the NodePort:
+   $ kubectl get svc {{ include "nomnom.dashboard-frontend.fullname" . }} -n {{ .Values.global.namespace }} -o jsonpath='{.spec.ports[0].nodePort}'
+
+   Access the dashboard at:
+   http://<node-ip>:<node-port>
+{{- else if eq .Values.dashboard.frontend.service.type "LoadBalancer" }}
+
+   Get the LoadBalancer IP:
+   $ kubectl get svc {{ include "nomnom.dashboard-frontend.fullname" . }} -n {{ .Values.global.namespace }}
+
+   Access the dashboard at:
+   http://<external-ip>:{{ .Values.dashboard.frontend.service.port }}
+{{- else }}
+
+   Port-forward to access locally:
+   $ kubectl port-forward -n {{ .Values.global.namespace }} svc/{{ include "nomnom.dashboard-frontend.fullname" . }} 3001:{{ .Values.dashboard.frontend.service.port }}
+
+   Access the dashboard at:
+   http://localhost:3001
+{{- end }}
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+3. Ingress:
+   Your services are exposed via Ingress at:
+{{- range .Values.ingress.hosts }}
+   - http://{{ .host }}
+{{- end }}
+{{- end }}
+
+========================================
+Monitoring and Debugging
+========================================
+
+View pod status:
+  $ kubectl get pods -n {{ .Values.global.namespace }}
+
+View logs:
+  $ kubectl logs -n {{ .Values.global.namespace }} -l app.kubernetes.io/name={{ include "nomnom.name" . }}
+
+{{- if .Values.ingestion.api.enabled }}
+
+View Ingestion API logs:
+  $ kubectl logs -n {{ .Values.global.namespace }} -l app.kubernetes.io/component=ingestion-api
+{{- end }}
+
+{{- if .Values.ingestion.worker.enabled }}
+
+View Worker logs:
+  $ kubectl logs -n {{ .Values.global.namespace }} -l app.kubernetes.io/component=worker
+{{- end }}
+
+{{- if .Values.nats.enabled }}
+
+Access NATS monitoring:
+  $ kubectl port-forward -n {{ .Values.global.namespace }} svc/{{ include "nomnom.nats.fullname" . }} 8222:8222
+
+  View monitoring at:
+  http://localhost:8222
+{{- end }}
+
+{{- if .Values.postgresql.enabled }}
+
+Access PostgreSQL:
+  $ kubectl exec -it -n {{ .Values.global.namespace }} {{ include "nomnom.postgres.fullname" . }}-0 -- psql -U {{ .Values.database.username }} -d {{ .Values.database.name }}
+{{- end }}
+
+========================================
+Configuration
+========================================
+
+{{- if .Values.ingestion.worker.keda.enabled }}
+
+KEDA autoscaling is enabled for workers:
+  Min replicas: {{ .Values.ingestion.worker.keda.minReplicas }}
+  Max replicas: {{ .Values.ingestion.worker.keda.maxReplicas }}
+  Lag threshold: Check worker ScaledObject for details
+{{- end }}
+
+{{- if .Values.ingestion.api.autoscaling.enabled }}
+
+HPA autoscaling is enabled for Ingestion API:
+  Min replicas: {{ .Values.ingestion.api.autoscaling.minReplicas }}
+  Max replicas: {{ .Values.ingestion.api.autoscaling.maxReplicas }}
+  Target CPU: {{ .Values.ingestion.api.autoscaling.targetCPUUtilizationPercentage }}%
+{{- end }}
+
+NATS JetStream Streams:
+  - MESSAGES (main ingestion stream)
+  - MESSAGES_DLQ (dead letter queue, 7-day retention)
+
+========================================
+Next Steps
+========================================
+
+1. Test the ingestion API:
+   curl -X POST http://<ingestion-api-url>/ingest/customer \
+     -H "Content-Type: application/json" \
+     -d '{"id": 1, "name": "Test Customer"}'
+
+2. View the data in the dashboard:
+   Open http://<dashboard-url> in your browser
+
+3. Monitor message processing:
+   $ kubectl logs -f -n {{ .Values.global.namespace }} -l app.kubernetes.io/component=worker
+
+For more information, visit:
+  https://github.com/yourusername/nomnom
+
+========================================

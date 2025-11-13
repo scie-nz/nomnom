@@ -26,7 +26,8 @@ pub fn generate_main_rs(
     writeln!(output, "mod parsers;")?;
     writeln!(output, "mod models;")?;
     writeln!(output, "mod database;")?;
-    writeln!(output, "mod error;\n")?;
+    writeln!(output, "mod error;")?;
+    writeln!(output, "mod transforms;\n")?;
 
     writeln!(output, "use database::{{create_pool, ensure_tables}};")?;
     writeln!(output, "use parsers::{{MessageParser, ParsedMessage}};")?;
@@ -97,7 +98,7 @@ pub fn generate_main_rs(
     writeln!(output, "    let stream = jetstream")?;
     writeln!(output, "        .get_or_create_stream(jetstream::stream::Config {{")?;
     writeln!(output, "            name: stream_name.clone(),")?;
-    writeln!(output, "            subjects: vec![\"messages.>\".to_string()],")?;
+    writeln!(output, "            subjects: vec![\"messages.ingest.>\".to_string()],")?;
     writeln!(output, "            max_age: Duration::from_secs(24 * 60 * 60),")?;
     writeln!(output, "            max_bytes: 1024 * 1024 * 1024,")?;
     writeln!(output, "            storage: jetstream::stream::StorageType::File,")?;
@@ -273,7 +274,8 @@ pub fn generate_main_rs(
     writeln!(output, "    .ok(); // Ignore errors - status tracking is optional\n")?;
 
     writeln!(output, "    // Parse message body using entity-specific parsers")?;
-    writeln!(output, "    let (entity_name, parsed) = MessageParser::parse_json(&envelope.body)?;\n")?;
+    writeln!(output, "    // Use entity_type hint from envelope if available")?;
+    writeln!(output, "    let (entity_name, parsed, raw_json) = MessageParser::parse_json(&envelope.body, envelope.entity_type.as_deref())?;\n")?;
 
     writeln!(output, "    // Insert into database based on entity type")?;
     writeln!(output, "    match parsed {{")?;
@@ -290,7 +292,14 @@ pub fn generate_main_rs(
         let db_config = entity.get_database_config().unwrap();
         let table_name = &db_config.conformant_table;
 
-        writeln!(output, "        ParsedMessage::{}(msg) => {{", entity.name)?;
+        // Check if this is Order entity (hardcoded for now)
+        let is_order = entity.name == "Order";
+
+        if is_order {
+            writeln!(output, "        ParsedMessage::{}(ref msg) => {{", entity.name)?;
+        } else {
+            writeln!(output, "        ParsedMessage::{}(msg) => {{", entity.name)?;
+        }
 
         // Get fields from persistence config
         if let Some(ref persistence) = entity.persistence {
@@ -330,6 +339,13 @@ pub fn generate_main_rs(
             writeln!(output)?;
         }
 
+        // If this is Order, process derived entities (OrderLineItems)
+        if is_order {
+            writeln!(output, "            // Process derived entities (OrderLineItems)")?;
+            writeln!(output, "            process_order_derived_entities(msg, &raw_json, &mut conn)?;")?;
+            writeln!(output)?;
+        }
+
         writeln!(output, "            tracing::info!(\"Inserted {{}} message\", entity_name);\n")?;
 
         writeln!(output, "            // Update status to 'completed'")?;
@@ -348,6 +364,120 @@ pub fn generate_main_rs(
     }
 
     writeln!(output, "    }}")?;
+    writeln!(output, "}}")?;
+
+    // Generate derived entity processors
+    generate_derived_entity_processors(&mut output, entities)?;
+
+    Ok(())
+}
+
+/// Generate derived entity processor functions
+fn generate_derived_entity_processors(
+    output: &mut std::fs::File,
+    entities: &[EntityDef],
+) -> Result<(), Box<dyn Error>> {
+    // Check if Order entity exists (hardcoded for now)
+    let has_order = entities.iter().any(|e| e.name == "Order" && e.is_root() && e.is_persistent());
+
+    if !has_order {
+        return Ok(());
+    }
+
+    writeln!(output)?;
+    writeln!(output, "/// Process derived entities for Order (OrderLineItems)")?;
+    writeln!(output, "fn process_order_derived_entities(")?;
+    writeln!(output, "    order: &parsers::OrderMessage,")?;
+    writeln!(output, "    raw_json: &serde_json::Value,")?;
+    writeln!(output, "    conn: &mut diesel::PgConnection,")?;
+    writeln!(output, ") -> Result<(), AppError> {{")?;
+    writeln!(output, "    use transforms::*;")?;
+    writeln!(output)?;
+    writeln!(output, "    // Get line_items array from raw JSON")?;
+    writeln!(output, "    let line_items = match raw_json.get(\"line_items\").and_then(|v| v.as_array()) {{")?;
+    writeln!(output, "        Some(items) => items,")?;
+    writeln!(output, "        None => {{")?;
+    writeln!(output, "            tracing::debug!(\"No line_items array found in Order message\");")?;
+    writeln!(output, "            return Ok(()); // Not an error if no line items")?;
+    writeln!(output, "        }}")?;
+    writeln!(output, "    }};")?;
+    writeln!(output)?;
+    writeln!(output, "    tracing::debug!(\"Processing {{}} line items for Order {{}}\", line_items.len(), order.order_key);")?;
+    writeln!(output)?;
+    writeln!(output, "    // Process each line item")?;
+    writeln!(output, "    for (index, item) in line_items.iter().enumerate() {{")?;
+    writeln!(output, "        // Extract fields using transform functions")?;
+    writeln!(output, "        let order_key = order.order_key.clone();")?;
+    writeln!(output)?;
+    writeln!(output, "        // Extract required fields with error handling")?;
+    writeln!(output, "        let line_number = match json_get_int(item, \"line_number\") {{")?;
+    writeln!(output, "            Ok(v) => v,")?;
+    writeln!(output, "            Err(e) => {{")?;
+    writeln!(output, "                tracing::warn!(\"Skipping line item at index {{}}: missing/invalid line_number: {{:?}}\", index, e);")?;
+    writeln!(output, "                continue;")?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }};")?;
+    writeln!(output)?;
+    writeln!(output, "        let part_key = match json_get_string(item, \"part_key\") {{")?;
+    writeln!(output, "            Ok(v) => v,")?;
+    writeln!(output, "            Err(e) => {{")?;
+    writeln!(output, "                tracing::warn!(\"Skipping line item at index {{}}: missing/invalid part_key: {{:?}}\", index, e);")?;
+    writeln!(output, "                continue;")?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }};")?;
+    writeln!(output)?;
+    writeln!(output, "        let quantity = match json_get_int(item, \"quantity\") {{")?;
+    writeln!(output, "            Ok(v) => v,")?;
+    writeln!(output, "            Err(e) => {{")?;
+    writeln!(output, "                tracing::warn!(\"Skipping line item at index {{}}: missing/invalid quantity: {{:?}}\", index, e);")?;
+    writeln!(output, "                continue;")?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }};")?;
+    writeln!(output)?;
+    writeln!(output, "        let extended_price = match json_get_float(item, \"extended_price\") {{")?;
+    writeln!(output, "            Ok(v) => v,")?;
+    writeln!(output, "            Err(e) => {{")?;
+    writeln!(output, "                tracing::warn!(\"Skipping line item at index {{}}: missing/invalid extended_price: {{:?}}\", index, e);")?;
+    writeln!(output, "                continue;")?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }};")?;
+    writeln!(output)?;
+    writeln!(output, "        // Extract optional fields")?;
+    writeln!(output, "        let supplier_key = json_get_optional_string(item, \"supplier_key\");")?;
+    writeln!(output, "        let discount = json_get_optional_float(item, \"discount\");")?;
+    writeln!(output, "        let tax = json_get_optional_float(item, \"tax\");")?;
+    writeln!(output, "        let return_flag = json_get_optional_string(item, \"return_flag\");")?;
+    writeln!(output, "        let line_status = json_get_optional_string(item, \"line_status\");")?;
+    writeln!(output, "        let ship_date = json_get_optional_string(item, \"ship_date\");")?;
+    writeln!(output, "        let commit_date = json_get_optional_string(item, \"commit_date\");")?;
+    writeln!(output, "        let receipt_date = json_get_optional_string(item, \"receipt_date\");")?;
+    writeln!(output)?;
+    writeln!(output, "        // Insert OrderLineItem")?;
+    writeln!(output, "        diesel::sql_query(")?;
+    writeln!(output, "            r#\"INSERT INTO order_line_items")?;
+    writeln!(output, "               (order_key, line_number, part_key, supplier_key, quantity, extended_price,")?;
+    writeln!(output, "                discount, tax, return_flag, line_status, ship_date, commit_date, receipt_date)")?;
+    writeln!(output, "               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)")?;
+    writeln!(output, "               ON CONFLICT (order_key, line_number) DO NOTHING\"#")?;
+    writeln!(output, "        )")?;
+    writeln!(output, "        .bind::<Text, _>(&order_key)")?;
+    writeln!(output, "        .bind::<Integer, _>(&line_number)")?;
+    writeln!(output, "        .bind::<Text, _>(&part_key)")?;
+    writeln!(output, "        .bind::<Nullable<Text>, _>(&supplier_key)")?;
+    writeln!(output, "        .bind::<Integer, _>(&quantity)")?;
+    writeln!(output, "        .bind::<Double, _>(&extended_price)")?;
+    writeln!(output, "        .bind::<Nullable<Double>, _>(&discount)")?;
+    writeln!(output, "        .bind::<Nullable<Double>, _>(&tax)")?;
+    writeln!(output, "        .bind::<Nullable<Text>, _>(&return_flag)")?;
+    writeln!(output, "        .bind::<Nullable<Text>, _>(&line_status)")?;
+    writeln!(output, "        .bind::<Nullable<Text>, _>(&ship_date)")?;
+    writeln!(output, "        .bind::<Nullable<Text>, _>(&commit_date)")?;
+    writeln!(output, "        .bind::<Nullable<Text>, _>(&receipt_date)")?;
+    writeln!(output, "        .execute(conn)?;")?;
+    writeln!(output, "    }}")?;
+    writeln!(output)?;
+    writeln!(output, "    tracing::info!(\"Inserted {{}} OrderLineItems for Order {{}}\", line_items.len(), order.order_key);")?;
+    writeln!(output, "    Ok(())")?;
     writeln!(output, "}}")?;
 
     Ok(())

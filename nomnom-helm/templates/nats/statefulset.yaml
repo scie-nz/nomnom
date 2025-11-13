@@ -1,0 +1,77 @@
+{{- if .Values.nats.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "nomnom.nats.fullname" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.nats.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "nomnom.nats.fullname" . }}
+  replicas: {{ .Values.nats.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nomnom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  template:
+    metadata:
+      labels:
+        {{- include "nomnom.nats.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: nats
+        image: "{{ .Values.nats.image.repository }}:{{ .Values.nats.image.tag }}"
+        imagePullPolicy: {{ .Values.nats.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.nats.service.client.port }}
+          name: client
+        - containerPort: {{ .Values.nats.service.cluster.port }}
+          name: cluster
+        - containerPort: {{ .Values.nats.service.monitor.port }}
+          name: monitor
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        command:
+        - nats-server
+        - --config
+        - /etc/nats-config/nats.conf
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nats-config
+        - name: data
+          mountPath: /data
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: monitor
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: monitor
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          {{- toYaml .Values.nats.resources | nindent 10 }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "nomnom.nats.fullname" . }}-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: {{ .Values.nats.jetstream.storage.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.nats.jetstream.storage.size }}
+{{- end }}

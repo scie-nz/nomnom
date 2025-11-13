@@ -1,0 +1,19 @@
+# Development Dockerfile - optimized for speed, not size
+# Uses pre-built binaries from host instead of building in container
+
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    libpq5 \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built binary from host
+COPY target/debug/nats-api /usr/local/bin/nats-api
+
+EXPOSE 8080
+
+CMD ["nats-api"]

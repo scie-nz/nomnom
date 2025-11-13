@@ -1,0 +1,299 @@
+# Default values for nomnom.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global settings
+global:
+  namespace: nomnom
+  domain: nomnom.local
+
+# Name overrides
+nameOverride: ""
+fullnameOverride: ""
+
+# NATS JetStream configuration
+nats:
+  enabled: true
+  image:
+    repository: nats
+    tag: "2.10-alpine"
+    pullPolicy: IfNotPresent
+  replicas: 3
+
+  cluster:
+    enabled: true
+
+  jetstream:
+    enabled: true
+    storage:
+      size: 10Gi
+      storageClass: standard
+    # Main stream configuration
+    mainStream:
+      name: MESSAGES
+      maxAge: 24h  # 24 hours
+      maxBytes: 1073741824  # 1GB
+      subject: "messages.ingest.>"
+    # DLQ stream configuration
+    dlqStream:
+      enabled: true
+      name: MESSAGESDLQ
+      maxAge: 168h  # 7 days (longer retention for DLQ)
+      maxBytes: 1073741824  # 1GB
+      subject: "messages.dlq.>"
+
+  service:
+    type: ClusterIP
+    client:
+      port: 4222
+    cluster:
+      port: 6222
+    monitor:
+      port: 8222
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# PostgreSQL configuration
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "17-alpine"
+    pullPolicy: IfNotPresent
+  replicas: 1
+
+  storage:
+    size: 10Gi
+    storageClass: standard
+
+  service:
+    type: ClusterIP
+    port: 5432
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  config:
+    maxConnections: 100
+    sharedBuffers: 256MB
+
+  # Message tracking table initialization
+  initdb:
+    enabled: true
+    scripts:
+      01-message-status.sql: |
+        CREATE TABLE IF NOT EXISTS message_status (
+          message_id UUID PRIMARY KEY,
+          entity_type VARCHAR(255) NOT NULL,
+          status VARCHAR(50) NOT NULL,
+          received_at TIMESTAMP NOT NULL,
+          processed_at TIMESTAMP,
+          retry_count INTEGER DEFAULT 0,
+          error_message TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_message_status_status ON message_status(status);
+        CREATE INDEX IF NOT EXISTS idx_message_status_received_at ON message_status(received_at);
+
+# Ingestion server configuration
+ingestion:
+  # API component (publishes to NATS)
+  api:
+    enabled: true
+    image:
+      repository: nomnom-ingestion-api
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    replicas: 3
+    port: 8080
+
+    service:
+      type: ClusterIP
+      port: 8080
+
+    env:
+      NATS_STREAM: "MESSAGES"
+      NATS_CONSUMER: "workers"
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 70
+
+    healthCheck:
+      liveness:
+        path: /health
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      readiness:
+        path: /ready
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+
+  # Worker component (consumes from NATS)
+  worker:
+    enabled: true
+    image:
+      repository: nomnom-ingestion-worker
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    env:
+      NATS_STREAM: "MESSAGES"
+      NATS_CONSUMER: "workers"
+      MAX_DELIVER: "3"          # Max delivery attempts before DLQ
+      BATCH_SIZE: "10"          # Messages per batch
+      POLL_INTERVAL_MS: "100"   # Polling interval in milliseconds
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+    # KEDA autoscaling (replaces HPA)
+    keda:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 20
+      cooldownPeriod: 300
+      pollingInterval: 15
+      triggers:
+        - type: nats-jetstream
+          metadata:
+            account: "$G"
+            stream: "MESSAGES"      # Main stream only (not DLQ)
+            consumer: "workers"      # Main consumer only (not DLQ)
+            lagThreshold: "100"      # Scale up if > 100 msgs per pod
+
+# Dashboard backend configuration
+dashboard:
+  backend:
+    enabled: true
+    image:
+      repository: localhost:5001/nomnom-dashboard-backend
+      tag: functional
+      pullPolicy: Always
+
+    replicas: 2
+    port: 8080
+
+    service:
+      type: ClusterIP
+      port: 8080
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+    healthCheck:
+      liveness:
+        path: /health
+        initialDelaySeconds: 30
+        periodSeconds: 10
+      readiness:
+        path: /api/health
+        initialDelaySeconds: 5
+        periodSeconds: 5
+
+  frontend:
+    enabled: true
+    image:
+      repository: localhost:5001/nomnom-dashboard-frontend
+      tag: functional
+      pullPolicy: Always
+
+    replicas: 2
+    port: 5173
+
+    service:
+      type: ClusterIP
+      port: 5173
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: nomnom.local
+      paths:
+        - path: /api/ingest
+          pathType: Prefix
+          backend:
+            service: ingestion-api
+            port: 8080
+        - path: /api
+          pathType: Prefix
+          backend:
+            service: dashboard-backend
+            port: 3000
+        - path: /
+          pathType: Prefix
+          backend:
+            service: dashboard-frontend
+            port: 5173
+  tls: []
+  # - secretName: nomnom-tls
+  #   hosts:
+  #     - nomnom.local
+
+# Database credentials (use Sealed Secrets in prod)
+database:
+  host: ""  # Will be set to postgres service name
+  port: 5432
+  name: nomnom
+  username: postgres
+  password: changeme  # IMPORTANT: Override in values-dev.yaml or use secrets
+
+# Monitoring (optional)
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+# KEDA configuration (installed separately)
+keda:
+  # Whether to create KEDA resources
+  # KEDA operator must be installed separately
+  enabled: true

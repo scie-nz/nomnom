@@ -1,0 +1,57 @@
+{{- if .Values.ingestion.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nomnom.ingestion-api.fullname" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.ingestion-api.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.ingestion.api.autoscaling.enabled }}
+  replicas: {{ .Values.ingestion.api.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "nomnom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ingestion-api
+  template:
+    metadata:
+      labels:
+        {{- include "nomnom.ingestion-api.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: ingestion-api
+        image: "{{ .Values.ingestion.api.image.repository }}:{{ .Values.ingestion.api.image.tag }}"
+        imagePullPolicy: {{ .Values.ingestion.api.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.ingestion.api.port }}
+          name: http
+          protocol: TCP
+        env:
+        - name: NATS_URL
+          value: {{ include "nomnom.nats.url" . | quote }}
+        - name: NATS_STREAM
+          value: {{ .Values.ingestion.api.env.NATS_STREAM | quote }}
+        - name: NATS_CONSUMER
+          value: {{ .Values.ingestion.api.env.NATS_CONSUMER | quote }}
+        - name: DATABASE_URL
+          value: {{ include "nomnom.database.url" . | quote }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.ingestion.api.healthCheck.liveness.path }}
+            port: http
+          initialDelaySeconds: {{ .Values.ingestion.api.healthCheck.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.ingestion.api.healthCheck.liveness.periodSeconds }}
+          timeoutSeconds: {{ .Values.ingestion.api.healthCheck.liveness.timeoutSeconds }}
+          failureThreshold: {{ .Values.ingestion.api.healthCheck.liveness.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.ingestion.api.healthCheck.readiness.path }}
+            port: http
+          initialDelaySeconds: {{ .Values.ingestion.api.healthCheck.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.ingestion.api.healthCheck.readiness.periodSeconds }}
+          timeoutSeconds: {{ .Values.ingestion.api.healthCheck.readiness.timeoutSeconds }}
+          failureThreshold: {{ .Values.ingestion.api.healthCheck.readiness.failureThreshold }}
+        resources:
+          {{- toYaml .Values.ingestion.api.resources | nindent 10 }}
+{{- end }}

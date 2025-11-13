@@ -1,0 +1,47 @@
+# Multi-stage Dockerfile for Rust dashboard backend (Alpine + Security Hardened)
+FROM rust:alpine as builder
+
+# Install build dependencies for musl
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    postgresql-dev
+
+WORKDIR /build
+
+# Copy manifests
+COPY Cargo.toml Cargo.lock* ./
+
+# Copy source
+COPY src ./src
+
+# Build release binary with musl target
+RUN cargo build --release
+
+# Runtime stage - minimal Alpine
+FROM alpine:3.19
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    libgcc \
+    postgresql-libs
+
+# Create non-root user
+RUN addgroup -g 1000 appuser && \
+    adduser -D -u 1000 -G appuser appuser
+
+WORKDIR /app
+
+# Copy binary from builder and set ownership
+COPY --from=builder --chown=appuser:appuser /build/target/release/dashboard /app/
+
+# Switch to non-root user
+USER appuser:appuser
+
+# Expose default port
+EXPOSE 3000
+
+# Run the binary
+CMD ["/app/dashboard"]

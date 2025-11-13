@@ -16,6 +16,7 @@ mod parsers_rs;
 mod models_rs;
 mod database_rs;
 mod error_rs;
+mod transforms_rs;
 
 pub use cargo_toml::generate_cargo_toml;
 pub use main_rs::generate_main_rs;
@@ -23,6 +24,7 @@ pub use parsers_rs::generate_parsers_rs;
 pub use models_rs::generate_models_rs;
 pub use database_rs::generate_database_rs;
 pub use error_rs::generate_error_rs;
+pub use transforms_rs::generate_transforms_rs;
 
 /// Database type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +84,9 @@ pub fn generate_all(
 
     println!("  ✓ Generating parsers.rs...");
     generate_parsers_rs(entities, output_dir)?;
+
+    println!("  ✓ Generating transforms.rs...");
+    generate_transforms_rs(output_dir)?;
 
     println!("  ✓ Generating models.rs...");
     generate_models_rs(output_dir)?;

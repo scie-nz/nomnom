@@ -319,7 +319,16 @@ fn generate_use_realtime_data_hook(_entities: &[EntityDef], output_dir: &Path) -
     writeln!(output, "  error: string | null;")?;
     writeln!(output, "}}\n")?;
 
-    writeln!(output, "const BACKEND_URL = 'ws://localhost:3000/ws';\n")?;
+    // Generate dynamic WebSocket URL that works in K8s and local dev
+    writeln!(output, "// Construct WebSocket URL from current location (works in K8s and local dev)")?;
+    writeln!(output, "const getWebSocketUrl = () => {{")?;
+    writeln!(output, "  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';")?;
+    writeln!(output, "  const host = window.location.hostname;")?;
+    writeln!(output, "  // Use NodePort 32390 for K8s, port 8080 for localhost")?;
+    writeln!(output, "  const port = host === 'localhost' ? '8080' : '32390';")?;
+    writeln!(output, "  return `${{protocol}}//${{host}}:${{port}}/ws`;")?;
+    writeln!(output, "}};")?;
+    writeln!(output, "const BACKEND_URL = getWebSocketUrl();\n")?;
 
     writeln!(output, "export function useRealtimeData(): RealtimeData {{")?;
     writeln!(output, "  const [records, setRecords] = useState<Map<string, EntityRecord[]>>(new Map());")?;

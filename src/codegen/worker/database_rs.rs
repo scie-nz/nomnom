@@ -66,9 +66,12 @@ pub fn generate_database_rs(
 
     // Generate CREATE TABLE statements for each persistent entity
     for entity in entities {
-        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
+        // Skip entities without persistence or abstract entities
+        if !entity.is_persistent() || entity.is_abstract {
             continue;
         }
+
+        // Skip reference entities (read from external sources, not stored locally)
         if entity.source_type.to_lowercase() == "reference" {
             continue;
         }
@@ -83,26 +86,40 @@ pub fn generate_database_rs(
         // Generate fields from persistence.field_overrides
         if let Some(ref persistence) = entity.persistence {
             let mut field_lines = Vec::new();
+
+            // FIX 1: Add primary key column FIRST if autogenerate=true
+            if let Some(ref pk_config) = persistence.primary_key {
+                if pk_config.autogenerate {
+                    let pk_type = match pk_config.key_type.as_str() {
+                        "i64" | "BigInt" => "BIGSERIAL",
+                        _ => "SERIAL"
+                    };
+                    field_lines.push(format!(
+                        "            {} {} PRIMARY KEY",
+                        pk_config.name.to_lowercase(),
+                        pk_type
+                    ));
+                }
+            }
+
+            // FIX 2: Add all field_overrides with proper SQL type mapping
             for field in &persistence.field_overrides {
                 let col_name = field.name.to_lowercase();
                 let field_type_str = field.field_type.as_deref().unwrap_or("String");
                 let sql_type = match field_type_str {
-                    "String" => "VARCHAR(255)",
-                    "i32" | "i64" | "Integer" => "INTEGER",
-                    "f64" | "Float" => "DOUBLE PRECISION",
-                    "bool" => "BOOLEAN",
+                    "String" => "TEXT",
+                    "i32" | "Integer" => "INTEGER",
+                    "i64" | "BigInt" => "BIGINT",
+                    "f64" | "Float" | "Decimal" => "NUMERIC",
+                    "bool" | "Boolean" => "BOOLEAN",
                     "NaiveDate" => "DATE",
-                    "Decimal" => "NUMERIC",
-                    _ => "VARCHAR(255)",
+                    "NaiveDateTime" | "DateTime" => "TIMESTAMP",
+                    "Json" | "Object" | "List[Object]" => "JSONB",
+                    _ => "TEXT",
                 };
 
                 let nullable = if field.nullable.unwrap_or(false) { "" } else { " NOT NULL" };
                 field_lines.push(format!("            {} {}{}", col_name, sql_type, nullable));
-            }
-
-            // Add primary key (first field typically)
-            if !field_lines.is_empty() {
-                field_lines[0] = format!("{} PRIMARY KEY", field_lines[0]);
             }
 
             for (i, line) in field_lines.iter().enumerate() {
@@ -112,11 +129,42 @@ pub fn generate_database_rs(
                     writeln!(output, "{}", line)?;
                 }
             }
+
+            // FIX 3: Add UNIQUE constraints for unicity_fields
+            if let Some(ref db_config) = persistence.database {
+                for unicity_field in &db_config.unicity_fields {
+                    writeln!(output, "            ,CONSTRAINT {}_{}_unique UNIQUE ({})",
+                        table_name,
+                        unicity_field.to_lowercase(),
+                        unicity_field.to_lowercase()
+                    )?;
+                }
+            }
         }
 
         writeln!(output, "        )")?;
         writeln!(output, "    \"#)")?;
         writeln!(output, "    .execute(conn)?;\n")?;
+
+        // FIX 4: Create indices for unicity fields
+        if let Some(ref persistence) = entity.persistence {
+            if let Some(ref db_config) = persistence.database {
+                for unicity_field in &db_config.unicity_fields {
+                    writeln!(output, "    // Index for {}", unicity_field)?;
+                    writeln!(output, "    diesel::sql_query(r#\"")?;
+                    writeln!(output, "        CREATE INDEX IF NOT EXISTS idx_{}_{}",
+                        table_name,
+                        unicity_field.to_lowercase()
+                    )?;
+                    writeln!(output, "        ON {}({})",
+                        table_name,
+                        unicity_field.to_lowercase()
+                    )?;
+                    writeln!(output, "    \"#)")?;
+                    writeln!(output, "    .execute(conn)?;\n")?;
+                }
+            }
+        }
     }
 
     // Add message_status table for tracking message processing

@@ -1,0 +1,46 @@
+{{- if .Values.nats.enabled }}
+---
+# Headless service for NATS cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nomnom.nats.fullname" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.nats.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "nomnom.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+  ports:
+  - name: client
+    port: {{ .Values.nats.service.client.port }}
+    targetPort: client
+  - name: cluster
+    port: {{ .Values.nats.service.cluster.port }}
+    targetPort: cluster
+  - name: monitor
+    port: {{ .Values.nats.service.monitor.port }}
+    targetPort: monitor
+---
+# ClusterIP service for client connections
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nomnom.nats.fullname" . }}-client
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.nats.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.nats.service.type }}
+  selector:
+    {{- include "nomnom.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+  ports:
+  - name: client
+    port: {{ .Values.nats.service.client.port }}
+    targetPort: client
+    protocol: TCP
+{{- end }}

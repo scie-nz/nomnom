@@ -1,0 +1,38 @@
+{{- if and .Values.ingestion.worker.enabled .Values.ingestion.worker.keda.enabled .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "nomnom.worker.fullname" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.worker.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "nomnom.worker.fullname" . }}
+  minReplicaCount: {{ .Values.ingestion.worker.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.ingestion.worker.keda.maxReplicas }}
+  cooldownPeriod: {{ .Values.ingestion.worker.keda.cooldownPeriod }}
+  pollingInterval: {{ .Values.ingestion.worker.keda.pollingInterval }}
+  triggers:
+  {{- range .Values.ingestion.worker.keda.triggers }}
+  - type: {{ .type }}
+    metadata:
+      {{- if .metadata.natsServerMonitoringEndpoint }}
+      natsServerMonitoringEndpoint: {{ include "nomnom.nats.fullname" $ }}.{{ $.Values.global.namespace }}.svc.cluster.local:{{ $.Values.nats.service.monitor.port }}
+      {{- end }}
+      {{- if .metadata.account }}
+      account: {{ .metadata.account | quote }}
+      {{- end }}
+      {{- if .metadata.stream }}
+      stream: {{ .metadata.stream | quote }}
+      {{- end }}
+      {{- if .metadata.consumer }}
+      consumer: {{ .metadata.consumer | quote }}
+      {{- end }}
+      {{- if .metadata.lagThreshold }}
+      lagThreshold: {{ .metadata.lagThreshold | quote }}
+      {{- end }}
+  {{- end }}
+{{- end }}

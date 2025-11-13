@@ -58,7 +58,7 @@ pub fn generate_nats_client_rs(output_dir: &Path) -> Result<(), Box<dyn Error>> 
     writeln!(file, "        let _stream = jetstream")?;
     writeln!(file, "            .get_or_create_stream(jetstream::stream::Config {{")?;
     writeln!(file, "                name: config.stream_name.clone(),")?;
-    writeln!(file, "                subjects: vec![\"messages.>\".to_string()],")?;
+    writeln!(file, "                subjects: vec![\"messages.ingest.>\".to_string()],")?;
     writeln!(file, "                max_age: config.max_age,")?;
     writeln!(file, "                max_bytes: config.max_bytes,")?;
     writeln!(file, "                storage: jetstream::stream::StorageType::File,")?;

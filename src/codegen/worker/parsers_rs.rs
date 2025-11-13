@@ -102,8 +102,9 @@ fn generate_parse_line_function(
     output: &mut std::fs::File,
     entities: &[EntityDef],
 ) -> Result<(), Box<dyn Error>> {
-    writeln!(output, "    /// Parse JSON message and return entity name + parsed data")?;
-    writeln!(output, "    pub fn parse_json(json_str: &str) -> Result<(String, ParsedMessage), AppError> {{")?;
+    writeln!(output, "    /// Parse JSON message and return entity name + parsed data + raw JSON value")?;
+    writeln!(output, "    /// If entity_type_hint is provided, try that entity type first")?;
+    writeln!(output, "    pub fn parse_json(json_str: &str, entity_type_hint: Option<&str>) -> Result<(String, ParsedMessage, serde_json::Value), AppError> {{")?;
     writeln!(output, "        use serde_json::Value;")?;
     writeln!(output, "        let json_str = json_str.trim();\n")?;
 
@@ -118,8 +119,33 @@ fn generate_parse_line_function(
     writeln!(output, "        let obj = value.as_object()")?;
     writeln!(output, "            .ok_or_else(|| AppError::InvalidFormat(\"Expected JSON object\".to_string()))?;\n")?;
 
-    // Generate entity detection logic - try to parse as each root entity type
-    writeln!(output, "        // Try to parse as each known root entity type")?;
+    // Generate entity type hint matching first
+    writeln!(output, "        // If entity_type hint is provided, try that first")?;
+    writeln!(output, "        if let Some(entity_type) = entity_type_hint {{")?;
+    writeln!(output, "            match entity_type {{")?;
+
+    for entity in entities {
+        // Only include root entities that are persistent
+        if !entity.is_root() || !entity.is_persistent() || entity.is_abstract {
+            continue;
+        }
+        if entity.source_type.to_lowercase() == "reference" {
+            continue;
+        }
+
+        writeln!(output, "                \"{}\" => {{", entity.name)?;
+        writeln!(output, "                    if let Ok(msg) = Self::parse_{}(obj) {{", entity.name.to_lowercase())?;
+        writeln!(output, "                        return Ok((\"{}\".to_string(), ParsedMessage::{}(msg), value.clone()));", entity.name, entity.name)?;
+        writeln!(output, "                    }}")?;
+        writeln!(output, "                }}")?;
+    }
+
+    writeln!(output, "                _ => {{}}")?;
+    writeln!(output, "            }}")?;
+    writeln!(output, "        }}\n")?;
+
+    // Generate fallback logic - try to parse as each root entity type
+    writeln!(output, "        // Fallback: Try to parse as each known root entity type")?;
 
     for entity in entities {
         // Only include root entities that are persistent
@@ -131,7 +157,7 @@ fn generate_parse_line_function(
         }
 
         writeln!(output, "        if let Ok(msg) = Self::parse_{}(obj) {{", entity.name.to_lowercase())?;
-        writeln!(output, "            return Ok((\"{}\".to_string(), ParsedMessage::{}(msg)));", entity.name, entity.name)?;
+        writeln!(output, "            return Ok((\"{}\".to_string(), ParsedMessage::{}(msg), value.clone()));", entity.name, entity.name)?;
         writeln!(output, "        }}")?;
     }
 

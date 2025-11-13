@@ -1,0 +1,54 @@
+{{- if .Values.nats.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nomnom.nats.fullname" . }}-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.nats.labels" . | nindent 4 }}
+data:
+  nats.conf: |
+    # NATS Server Configuration
+
+    # Client port
+    port: {{ .Values.nats.service.client.port }}
+
+    # HTTP monitoring port
+    http_port: {{ .Values.nats.service.monitor.port }}
+
+    # Server name
+    server_name: $POD_NAME
+
+    {{- if .Values.nats.cluster.enabled }}
+    # Clustering Configuration
+    cluster {
+      name: nomnom-cluster
+      port: {{ .Values.nats.service.cluster.port }}
+
+      routes = [
+        {{- $replicas := int .Values.nats.replicas }}
+        {{- $name := include "nomnom.nats.fullname" . }}
+        {{- $namespace := .Values.global.namespace }}
+        {{- $port := .Values.nats.service.cluster.port }}
+        {{- range $i := until $replicas }}
+        nats://{{ $name }}-{{ $i }}.{{ $name }}.{{ $namespace }}.svc.cluster.local:{{ $port }}{{ if ne $i (sub $replicas 1) }},{{ end }}
+        {{- end }}
+      ]
+    }
+    {{- end }}
+
+    {{- if .Values.nats.jetstream.enabled }}
+    # JetStream Configuration
+    jetstream {
+      store_dir: /data/jetstream
+      max_mem: 512M
+      max_file: {{ .Values.nats.jetstream.storage.size }}
+    }
+    {{- end }}
+
+    # Logging
+    log_file: "/dev/stdout"
+    logtime: true
+    debug: false
+    trace: false
+{{- end }}

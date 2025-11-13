@@ -218,6 +218,7 @@ fn generate_config_rs(
     writeln!(output, "pub struct EntityConfig {{")?;
     writeln!(output, "    pub name: &'static str,")?;
     writeln!(output, "    pub table: &'static str,")?;
+    writeln!(output, "    pub primary_key: &'static str,")?;
     writeln!(output, "    pub color: &'static str,")?;
     writeln!(output, "    pub icon: &'static str,")?;
     writeln!(output, "    pub fields: &'static [&'static str],")?;
@@ -239,9 +240,25 @@ fn generate_config_rs(
 
         let display_config = generate_entity_display_config(entity);
 
+        // Get primary key field (prefer primary_key config, fall back to conformant_id_column)
+        let primary_key = if let Some(ref persistence) = entity.persistence {
+            if let Some(ref pk_config) = persistence.primary_key {
+                // Use the explicit primary_key name
+                pk_config.name.to_lowercase()
+            } else if let Some(ref db_config) = persistence.database {
+                // Fall back to conformant_id_column
+                db_config.conformant_id_column.to_lowercase()
+            } else {
+                "id".to_string()
+            }
+        } else {
+            "id".to_string()
+        };
+
         writeln!(output, "    EntityConfig {{")?;
         writeln!(output, "        name: \"{}\",", display_config.name)?;
         writeln!(output, "        table: \"{}\",", display_config.table)?;
+        writeln!(output, "        primary_key: \"{}\",", primary_key)?;
         writeln!(output, "        color: \"{}\",", display_config.color)?;
         writeln!(output, "        icon: \"{}\",", display_config.icon)?;
         write!(output, "        fields: &[")?;
@@ -299,6 +316,21 @@ fn generate_polling_rs(
         let table_name = &display_config.table;
         let entity_name = &display_config.name;
 
+        // Extract primary key for this entity (prefer primary_key config, fall back to conformant_id_column)
+        let primary_key = if let Some(ref persistence) = entity.persistence {
+            if let Some(ref pk_config) = persistence.primary_key {
+                // Use the explicit primary_key name
+                pk_config.name.to_lowercase()
+            } else if let Some(ref db_config) = persistence.database {
+                // Fall back to conformant_id_column
+                db_config.conformant_id_column.to_lowercase()
+            } else {
+                "id".to_string()
+            }
+        } else {
+            "id".to_string()
+        };
+
         writeln!(output, "    // Spawn polling task for {}", entity_name)?;
         writeln!(output, "    {{")?;
         writeln!(output, "        let state = state.clone();")?;
@@ -306,6 +338,7 @@ fn generate_polling_rs(
         writeln!(output, "            poll_entity_table(")?;
         writeln!(output, "                \"{}\".to_string(),", table_name)?;
         writeln!(output, "                \"{}\".to_string(),", entity_name)?;
+        writeln!(output, "                \"{}\".to_string(),", primary_key)?;
         writeln!(output, "                state,")?;
         writeln!(output, "            ).await;")?;
         writeln!(output, "        }});")?;
@@ -320,6 +353,7 @@ fn generate_polling_rs(
     writeln!(output, "async fn poll_entity_table(")?;
     writeln!(output, "    table: String,")?;
     writeln!(output, "    entity_name: String,")?;
+    writeln!(output, "    primary_key: String,")?;
     writeln!(output, "    state: AppState,")?;
     writeln!(output, ") {{")?;
     writeln!(output, "    tracing::info!(\"Starting polling for table: {{}}\", table);\n")?;
@@ -333,8 +367,8 @@ fn generate_polling_rs(
 
     writeln!(output, "        // Query for new records")?;
     writeln!(output, "        let query = format!(")?;
-    writeln!(output, "            \"SELECT * FROM {{}} WHERE id > $1 ORDER BY id ASC LIMIT $2\",")?;
-    writeln!(output, "            table")?;
+    writeln!(output, "            \"SELECT * FROM {{}} WHERE {{}} > $1 ORDER BY {{}} ASC LIMIT $2\",")?;
+    writeln!(output, "            table, primary_key, primary_key")?;
     writeln!(output, "        );\n")?;
 
     writeln!(output, "        match sqlx::query(&query)")?;
@@ -347,13 +381,17 @@ fn generate_polling_rs(
     writeln!(output, "                if !rows.is_empty() {{")?;
     writeln!(output, "                    tracing::debug!(\"Found {{}} new records in {{}}\", rows.len(), table);\n")?;
 
-    writeln!(output, "                    // Get max ID from results")?;
-    writeln!(output, "                    if let Some(max_id) = rows.iter()")?;
-    writeln!(output, "                        .filter_map(|row| row.try_get::<i64, _>(\"id\").ok())")?;
-    writeln!(output, "                        .max()")?;
-    writeln!(output, "                    {{")?;
-    writeln!(output, "                        // Update last seen ID")?;
-    writeln!(output, "                        state.last_ids.write().await.insert(table.clone(), max_id);")?;
+    writeln!(output, "                    // Get last primary key value from results")?;
+    writeln!(output, "                    // Handle both integer and string primary keys")?;
+    writeln!(output, "                    if let Some(last_row) = rows.last() {{")?;
+    writeln!(output, "                        // Try integer first, fall back to string")?;
+    writeln!(output, "                        if let Ok(pk_val) = last_row.try_get::<i64, _>(primary_key.as_str()) {{")?;
+    writeln!(output, "                            state.last_ids.write().await.insert(table.clone(), pk_val);")?;
+    writeln!(output, "                        }} else if let Ok(pk_str) = last_row.try_get::<String, _>(primary_key.as_str()) {{")?;
+    writeln!(output, "                            // For string keys, use hash as tracking ID")?;
+    writeln!(output, "                            let hash_id = pk_str.bytes().fold(0i64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as i64));")?;
+    writeln!(output, "                            state.last_ids.write().await.insert(table.clone(), hash_id);")?;
+    writeln!(output, "                        }}")?;
     writeln!(output, "                    }}\n")?;
 
     writeln!(output, "                    // Broadcast each new record to WebSocket clients")?;
@@ -459,8 +497,8 @@ fn generate_websocket_rs(src_dir: &Path) -> Result<(), Box<dyn Error>> {
     writeln!(output, "    for entity in config::ENTITIES {{")?;
     writeln!(output, "        // Query most recent records from this table")?;
     writeln!(output, "        let query = format!(")?;
-    writeln!(output, "            \"SELECT * FROM {{}} ORDER BY id DESC LIMIT $1\",")?;
-    writeln!(output, "            entity.table")?;
+    writeln!(output, "            \"SELECT * FROM {{}} ORDER BY {{}} DESC LIMIT $1\",")?;
+    writeln!(output, "            entity.table, entity.primary_key")?;
     writeln!(output, "        );\n")?;
 
     writeln!(output, "        match sqlx::query(&query)")?;

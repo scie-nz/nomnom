@@ -49,3 +49,10 @@ generated_bindings.rs
 # Build artifacts
 rust_build/
 *.whl
+# Helm testing artifacts
+target/debug/worker
+dashboard-placeholder.html
+Dockerfile.frontend
+Dockerfile.*.dev
+Dockerfile.dev-complete
+Dockerfile.worker-dev-complete

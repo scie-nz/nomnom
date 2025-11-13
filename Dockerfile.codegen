@@ -1,0 +1,26 @@
+# Docker image for running nomnom code generation
+# This avoids local dependency issues by running everything in a container
+
+FROM rust:1-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    libsqlite3-dev \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy source code
+COPY Cargo.toml ./
+COPY src ./src
+
+# Remove Cargo.lock to regenerate with compatible versions
+RUN rm -f Cargo.lock
+
+# Build nomnom binary
+RUN cargo build --bin nomnom
+
+# Entry point runs nomnom with passed arguments
+ENTRYPOINT ["/app/target/debug/nomnom"]

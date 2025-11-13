@@ -1,0 +1,43 @@
+{{- if .Values.ingestion.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nomnom.worker.fullname" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.worker.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.ingestion.worker.keda.enabled }}
+  replicas: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "nomnom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "nomnom.worker.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: worker
+        image: "{{ .Values.ingestion.worker.image.repository }}:{{ .Values.ingestion.worker.image.tag }}"
+        imagePullPolicy: {{ .Values.ingestion.worker.image.pullPolicy }}
+        env:
+        - name: NATS_URL
+          value: {{ include "nomnom.nats.url" . | quote }}
+        - name: NATS_STREAM
+          value: {{ .Values.ingestion.worker.env.NATS_STREAM | quote }}
+        - name: NATS_CONSUMER
+          value: {{ .Values.ingestion.worker.env.NATS_CONSUMER | quote }}
+        - name: DATABASE_URL
+          value: {{ include "nomnom.database.url" . | quote }}
+        - name: MAX_DELIVER
+          value: {{ .Values.ingestion.worker.env.MAX_DELIVER | quote }}
+        - name: BATCH_SIZE
+          value: {{ .Values.ingestion.worker.env.BATCH_SIZE | quote }}
+        - name: POLL_INTERVAL_MS
+          value: {{ .Values.ingestion.worker.env.POLL_INTERVAL_MS | quote }}
+        resources:
+          {{- toYaml .Values.ingestion.worker.resources | nindent 10 }}
+{{- end }}

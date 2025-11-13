@@ -1,0 +1,94 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "nomnom.postgres.fullname" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.postgres.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "nomnom.postgres.fullname" . }}
+  replicas: {{ .Values.postgresql.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nomnom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "nomnom.postgres.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: postgres
+        image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+        imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.postgresql.service.port }}
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: {{ .Values.database.name | quote }}
+        - name: POSTGRES_USER
+          value: {{ .Values.database.username | quote }}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "nomnom.fullname" . }}-db-credentials
+              key: postgres-password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        {{- if .Values.postgresql.config }}
+        {{- if .Values.postgresql.config.maxConnections }}
+        - name: POSTGRES_MAX_CONNECTIONS
+          value: {{ .Values.postgresql.config.maxConnections | quote }}
+        {{- end }}
+        {{- if .Values.postgresql.config.sharedBuffers }}
+        - name: POSTGRES_SHARED_BUFFERS
+          value: {{ .Values.postgresql.config.sharedBuffers | quote }}
+        {{- end }}
+        {{- end }}
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        {{- if .Values.postgresql.initdb.enabled }}
+        - name: initdb
+          mountPath: /docker-entrypoint-initdb.d
+        {{- end }}
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - {{ .Values.database.username }}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - {{ .Values.database.username }}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          {{- toYaml .Values.postgresql.resources | nindent 10 }}
+      volumes:
+      {{- if .Values.postgresql.initdb.enabled }}
+      - name: initdb
+        configMap:
+          name: {{ include "nomnom.postgres.fullname" . }}-initdb
+      {{- end }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: {{ .Values.postgresql.storage.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.postgresql.storage.size }}
+{{- end }}

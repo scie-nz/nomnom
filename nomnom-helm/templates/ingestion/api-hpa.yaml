@@ -1,0 +1,23 @@
+{{- if and .Values.ingestion.api.enabled .Values.ingestion.api.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "nomnom.ingestion-api.fullname" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.ingestion-api.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "nomnom.ingestion-api.fullname" . }}
+  minReplicas: {{ .Values.ingestion.api.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.ingestion.api.autoscaling.maxReplicas }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.ingestion.api.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
