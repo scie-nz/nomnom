@@ -515,6 +515,30 @@ fn collect_entity_dependencies(
             }
         }
 
+        // Process derivation.source_entities dependencies
+        if let Some(ref derivation) = entity.derivation {
+            if let Some(ref source_entities) = derivation.source_entities {
+                match source_entities {
+                    serde_yaml::Value::Mapping(map) => {
+                        for (_key, value) in map {
+                            if let serde_yaml::Value::String(source_entity_name) = value {
+                                if !source_entity_name.eq_ignore_ascii_case(&root_entity.name) {
+                                    collect_entity_dependencies(
+                                        source_entity_name,
+                                        all_entities,
+                                        root_entity,
+                                        ordered_list,
+                                        seen
+                                    );
+                                }
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        }
+
         // Then, recursively process this entity's field dependencies
         for field in &entity.fields {
             if let Some(ref computed_from) = field.computed_from {
@@ -575,6 +599,20 @@ fn generate_derived_entity_extraction(
         if !parent_name.eq_ignore_ascii_case(&root_entity.name) {
             collect_entity_dependencies(
                 parent_name,
+                all_entities,
+                root_entity,
+                &mut needed_entities,
+                &mut seen
+            );
+        }
+    }
+
+    // Check if entity has parents field (list format)
+    for parent_def in &derived_entity.parents {
+        let parent_type = &parent_def.parent_type;
+        if !parent_type.eq_ignore_ascii_case(&root_entity.name) {
+            collect_entity_dependencies(
+                parent_type,
                 all_entities,
                 root_entity,
                 &mut needed_entities,
@@ -827,13 +865,11 @@ fn generate_field_extraction(
                 // Call transform with intermediate entity variable
                 let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
 
-                // Check if the intermediate variable needs to be unwrapped (Option<String>)
-                // If it's Option<String>, we need to pass it as Option reference or unwrap
+                // Pass intermediate entity field as &Option<String> reference (transforms expect this signature)
                 let all_args = if args_list.is_empty() {
-                    // For transforms that expect &str, unwrap Option or use empty string
-                    format!("{}.as_ref().map(|s| s.as_str()).unwrap_or(\"\")", intermediate_var)
+                    format!("&{}", intermediate_var)
                 } else {
-                    format!("{}.as_ref().map(|s| s.as_str()).unwrap_or(\"\"), {}", intermediate_var, args_list.join(", "))
+                    format!("&{}, {}", intermediate_var, args_list.join(", "))
                 };
 
                 writeln!(output, "    let {} = if {}.is_some() {{ {}({}).unwrap_or(None) }} else {{ None }};",
