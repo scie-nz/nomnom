@@ -1,0 +1,103 @@
+{{- if .Values.codegen.enabled }}
+{{- $components := list "ingestion-api" "worker" "dashboard-backend" }}
+{{- range $component := $components }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nomnom.fullname" $ }}-build-{{ $component }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: codegen
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "nomnom.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: codegen
+        build-component: {{ $component }}
+    spec:
+      serviceAccountName: {{ include "nomnom.fullname" $ }}-buildah
+      restartPolicy: Never
+
+      initContainers:
+      - name: git-sync
+        image: registry.k8s.io/git-sync/git-sync:v4.2.4
+        args:
+          - --repo={{ $.Values.codegen.buildah.git.repository }}
+          - --branch={{ $.Values.codegen.buildah.git.branch }}
+          - --root=/workspace
+          - --one-time=true
+          - --depth=1
+        {{- if $.Values.codegen.buildah.git.secretName }}
+        env:
+        - name: GITSYNC_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.codegen.buildah.git.secretName }}
+              key: username
+        - name: GITSYNC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.codegen.buildah.git.secretName }}
+              key: password
+        {{- end }}
+        volumeMounts:
+          - name: workspace
+            mountPath: /workspace
+
+      containers:
+      - name: buildah
+        image: "{{ $.Values.codegen.buildah.image.repository }}:{{ $.Values.codegen.buildah.image.tag }}"
+        workingDir: /workspace/git
+        command: ["/bin/bash", "/scripts/build.sh"]
+        env:
+        - name: COMPONENT
+          value: "{{ $component }}"
+        - name: REGISTRY
+          value: {{ include "nomnom.fullname" $ }}-registry:5000
+        - name: TAG
+          value: "latest"
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: buildah-cache
+          mountPath: /var/lib/containers
+        - name: scripts
+          mountPath: /scripts
+        {{- range $filename, $content := $.Values.codegen.entities }}
+        - name: entity-{{ $filename | replace "." "-" }}
+          mountPath: /entities/{{ $filename }}
+          subPath: {{ $filename }}
+        {{- end }}
+        securityContext:
+          capabilities:
+            add: ["SETUID", "SETGID"]
+          allowPrivilegeEscalation: true
+          runAsUser: 0
+        resources:
+          {{- toYaml $.Values.codegen.buildah.resources | nindent 10 }}
+
+      volumes:
+      - name: workspace
+        emptyDir: {}
+      - name: buildah-cache
+        persistentVolumeClaim:
+          claimName: {{ include "nomnom.fullname" $ }}-buildah-cache
+      - name: scripts
+        configMap:
+          name: {{ include "nomnom.fullname" $ }}-buildah-scripts
+          defaultMode: 0755
+      {{- range $filename, $content := $.Values.codegen.entities }}
+      - name: entity-{{ $filename | replace "." "-" }}
+        configMap:
+          name: {{ include "nomnom.fullname" $ }}-entity-{{ $filename | replace "." "-" }}
+      {{- end }}
+{{- end }}
+{{- end }}

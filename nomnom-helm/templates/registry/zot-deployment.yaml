@@ -1,0 +1,138 @@
+{{- if .Values.codegen.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "nomnom.fullname" . }}-zot-storage
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.codegen.registry.storageClass }}
+  storageClassName: {{ .Values.codegen.registry.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.codegen.registry.storage.size }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nomnom.fullname" . }}-zot-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+data:
+  config.json: |
+    {
+      "distSpecVersion": "1.1.0",
+      "storage": {
+        "rootDirectory": "/var/lib/registry",
+        "dedupe": {{ .Values.codegen.registry.dedupe }},
+        "gc": {{ .Values.codegen.registry.gc }},
+        "gcDelay": "{{ .Values.codegen.registry.gcDelay }}",
+        "gcInterval": "{{ .Values.codegen.registry.gcInterval }}"
+      },
+      "http": {
+        "address": "0.0.0.0",
+        "port": "5000",
+        "realm": "zot"
+      },
+      "log": {
+        "level": "{{ .Values.codegen.registry.logLevel }}",
+        "output": "/dev/stdout"
+      },
+      "extensions": {
+        "search": {
+          "enable": true
+        },
+        "ui": {
+          "enable": true
+        }
+      }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nomnom.fullname" . }}-zot-registry
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "nomnom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: registry
+  template:
+    metadata:
+      labels:
+        {{- include "nomnom.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: registry
+    spec:
+      containers:
+      - name: zot
+        image: "{{ .Values.codegen.registry.image.repository }}:{{ .Values.codegen.registry.image.tag }}"
+        imagePullPolicy: {{ .Values.codegen.registry.image.pullPolicy }}
+        args:
+          - serve
+          - /etc/zot/config.json
+        ports:
+        - containerPort: 5000
+          name: registry
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/zot
+        - name: data
+          mountPath: /var/lib/registry
+        livenessProbe:
+          httpGet:
+            path: /v2/
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /v2/
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          {{- toYaml .Values.codegen.registry.resources | nindent 10 }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "nomnom.fullname" . }}-zot-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ include "nomnom.fullname" . }}-zot-storage
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nomnom.fullname" . }}-registry
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5000
+    targetPort: 5000
+    protocol: TCP
+    name: registry
+  selector:
+    {{- include "nomnom.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+{{- end }}

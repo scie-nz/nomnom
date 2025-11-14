@@ -1,0 +1,152 @@
+# Dockerfile.component - Single parameterized Dockerfile for all nomnom components
+#
+# Build args:
+#   COMPONENT: ingestion-api, worker, or dashboard-backend
+#   CONFIG_PATH: Path to entity config directory (mounted as volume in dev)
+#
+# Usage for development (with mounted volume):
+#   docker build -f Dockerfile.component \
+#     --build-arg COMPONENT=worker \
+#     --build-arg CONFIG_PATH=/config \
+#     -t nomnom-worker:dev .
+#
+#   docker run -v $(pwd)/config/examples/tpch:/config nomnom-worker:dev
+#
+# Usage for production (with baked-in config):
+#   Use Dockerfile.component.prod instead (future work)
+#
+# NOTE: Uses Debian for build stages to avoid LLVM I/O issues on Docker Desktop macOS
+
+FROM rust:1.86-bookworm AS builder-base
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+
+# Stage 1: Build nomnom CLI directly (skip dependency caching to avoid edition2024 issues)
+FROM builder-base AS cli-builder
+
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY assets ./assets
+
+# Build the nomnom CLI binary directly
+RUN cargo build --release --bin nomnom && \
+    ls -lh /app/target/release/nomnom
+
+
+# Stage 4: Generate component code
+FROM debian:bookworm-slim AS code-generator
+
+RUN apt-get update && apt-get install -y \
+    libgcc-s1 \
+    libstdc++6 \
+    libsqlite3-0 \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy nomnom CLI from builder
+COPY --from=cli-builder /app/target/release/nomnom /usr/local/bin/nomnom
+
+# Build arg: which component to generate
+ARG COMPONENT
+ENV COMPONENT=${COMPONENT}
+
+# Build arg: where config files are located (for mounted volumes)
+ARG CONFIG_PATH=/config/examples/tpch
+ENV CONFIG_PATH=${CONFIG_PATH}
+
+# Create output directory
+RUN mkdir -p /generated
+
+# This will be overridden at runtime by mounted volume in dev mode
+# For production builds, copy config into image before this stage
+COPY config /config
+
+# Generate code based on component type
+RUN echo "Generating code for component: ${COMPONENT}" && \
+    case "${COMPONENT}" in \
+        ingestion-api) \
+            nomnom generate-ingestion-server \
+                --entities ${CONFIG_PATH}/entities \
+                --output /generated \
+                --database postgresql ;; \
+        worker) \
+            nomnom generate-worker \
+                --entities ${CONFIG_PATH}/entities \
+                --output /generated \
+                --database postgresql ;; \
+        dashboard-backend) \
+            nomnom generate-dashboard \
+                --entities ${CONFIG_PATH}/entities \
+                --output /generated \
+                --database postgresql \
+                --backend axum ;; \
+        *) \
+            echo "ERROR: Unknown component ${COMPONENT}. Must be: ingestion-api, worker, or dashboard-backend" && \
+            exit 1 ;; \
+    esac && \
+    echo "Code generation complete" && \
+    ls -la /generated/
+
+
+# Stage 5: Build the component binary directly (skip dependency caching)
+FROM builder-base AS component-builder
+
+ARG COMPONENT
+ENV COMPONENT=${COMPONENT}
+
+# Copy generated code
+COPY --from=code-generator /generated /app
+
+WORKDIR /app
+
+# Determine the binary name based on component
+RUN case "${COMPONENT}" in \
+        ingestion-api) BIN_NAME="ingestion-server" ;; \
+        worker) BIN_NAME="worker" ;; \
+        dashboard-backend) BIN_NAME="dashboard-backend" ;; \
+        *) echo "ERROR: Unknown component ${COMPONENT}" && exit 1 ;; \
+    esac && \
+    echo "Building binary: ${BIN_NAME}" && \
+    cargo build --release --bin ${BIN_NAME} && \
+    mv /app/target/release/${BIN_NAME} /app/target/release/component && \
+    ls -lh /app/target/release/component
+
+
+# Final stage: Minimal runtime image
+FROM debian:bookworm-slim
+
+ARG COMPONENT
+ENV COMPONENT=${COMPONENT}
+
+RUN apt-get update && apt-get install -y \
+    libgcc-s1 \
+    libstdc++6 \
+    libpq5 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the built binary
+COPY --from=component-builder /app/target/release/component /app/component
+
+# Make it executable
+RUN chmod +x /app/component && \
+    /app/component --version || echo "Component binary ready"
+
+# Set component-specific defaults
+ENV RUST_LOG=info
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/component"]

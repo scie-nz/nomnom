@@ -1,0 +1,16 @@
+{{- if .Values.codegen.enabled }}
+{{- range $filename, $content := .Values.codegen.entities }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nomnom.fullname" $ }}-entity-{{ $filename | replace "." "-" }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: codegen
+data:
+  {{ $filename }}: |
+{{ $content | indent 4 }}
+{{- end }}
+{{- end }}

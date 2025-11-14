@@ -127,3 +127,558 @@ ingress:
 # KEDA configuration
 keda:
   enabled: false  # Disable KEDA for dev
+# In-cluster code generation - ENABLED for development
+codegen:
+  enabled: true
+
+  # Use actual GitHub repository
+  buildah:
+    git:
+      repository: "https://github.com/bogdanstate/nomnom.git"
+      branch: "main"
+
+  # TPC-H Entity Definitions
+  entities:
+    order.yaml: |
+      # Order entity - represents a customer order
+      # Based on TPC-H ORDERS table
+      # Simplified version without transforms - just plain database fields
+
+      entity:
+        name: Order
+        source_type: root  # Root entity - can be loaded from JSON/CSV
+        prefix: "O"  # Message prefix for ingestion server
+        doc: "Represents a customer order"
+
+        fields:
+          # Order identification
+          - name: order_key
+            type: String
+            doc: "Unique order identifier"
+            nullable: false
+
+          - name: customer_key
+            type: String
+            doc: "Foreign key to customer"
+            nullable: false
+
+          - name: order_status
+            type: String
+            doc: "Order status (e.g., O=open, F=fulfilled, P=pending)"
+            nullable: false
+
+          - name: total_price
+            type: Float
+            doc: "Total order price"
+            nullable: false
+
+          - name: order_date
+            type: String
+            doc: "Date order was placed (YYYY-MM-DD)"
+            nullable: false
+
+          - name: order_priority
+            type: String
+            doc: "Order priority (e.g., 1-URGENT, 2-HIGH, 3-MEDIUM)"
+            nullable: true
+
+          - name: clerk
+            type: String
+            doc: "Clerk who processed the order"
+            nullable: true
+
+          - name: ship_priority
+            type: Integer
+            doc: "Shipping priority"
+            nullable: true
+
+          - name: comment
+            type: String
+            doc: "Order comments"
+            nullable: true
+
+          # Array of line items (for extracting child OrderLineItem entities)
+          - name: line_items
+            type: List[Object]
+            doc: "Array of line items in this order (each item is a dict with line item fields)"
+            nullable: false
+
+        # Database persistence configuration
+        persistence:
+          database:
+            conformant_table: orders
+            conformant_id_column: id
+            unicity_fields:
+              - order_key  # Ensure unique order keys
+
+          primary_key:
+            name: id
+            type: Integer
+            autogenerate: true
+
+          field_overrides:
+            - name: order_key
+              type: String
+              nullable: false
+
+            - name: customer_key
+              type: String
+              nullable: false
+
+            - name: order_status
+              type: String
+              nullable: false
+
+            - name: total_price
+              type: Float
+              nullable: false
+
+            - name: order_date
+              type: String
+              nullable: false
+
+            - name: order_priority
+              type: String
+              nullable: true
+
+            - name: clerk
+              type: String
+              nullable: true
+
+            - name: ship_priority
+              type: Integer
+              nullable: true
+
+            - name: comment
+              type: String
+              nullable: true
+
+    orderlineitem.yaml: |
+      # OrderLineItem entity - represents a line item within an order
+      # Based on TPC-H LINEITEM table
+      # Simplified version - just plain database fields
+
+      entity:
+        name: OrderLineItem
+        source_type: derived  # Derived from Order parent
+        prefix: "L"  # Message prefix for ingestion server (different from Order's "O")
+        repeated_for:
+          entity: Order
+          field: line_items  # Extract from line_items array in Order
+          each_known_as: item  # Reference each line item as 'item'
+        doc: "Represents a single line item within an order"
+
+        fields:
+          # Link to parent order - copy from parent Order
+          - name: order_key
+            type: String
+            doc: "Order key (foreign key to orders table)"
+            nullable: false
+            computed_from:
+              transform: copy_field
+              sources:
+                - source: Order
+                  field: order_key
+
+          # Line item specific fields - extract from JSON item object
+          - name: line_number
+            type: Integer
+            doc: "Line item sequence number within order"
+            nullable: false
+            computed_from:
+              transform: json_get_int
+              sources:
+                - item
+              args:
+                field: "line_number"
+
+          - name: part_key
+            type: String
+            doc: "Foreign key to product/part"
+            nullable: false
+            computed_from:
+              transform: json_get_string
+              sources:
+                - item
+              args:
+                field: "part_key"
+
+          - name: supplier_key
+            type: String
+            doc: "Foreign key to supplier"
+            nullable: true
+            computed_from:
+              transform: json_get_optional_string
+              sources:
+                - item
+              args:
+                field: "supplier_key"
+
+          - name: quantity
+            type: Integer
+            doc: "Quantity ordered"
+            nullable: false
+            computed_from:
+              transform: json_get_int
+              sources:
+                - item
+              args:
+                field: "quantity"
+
+          - name: extended_price
+            type: Float
+            doc: "Extended price (quantity * price)"
+            nullable: false
+            computed_from:
+              transform: json_get_float
+              sources:
+                - item
+              args:
+                field: "extended_price"
+
+          - name: discount
+            type: Float
+            doc: "Discount percentage (0.00 to 0.10)"
+            nullable: true
+            computed_from:
+              transform: json_get_optional_float
+              sources:
+                - item
+              args:
+                field: "discount"
+
+          - name: tax
+            type: Float
+            doc: "Tax percentage"
+            nullable: true
+            computed_from:
+              transform: json_get_optional_float
+              sources:
+                - item
+              args:
+                field: "tax"
+
+          - name: return_flag
+            type: String
+            doc: "Return flag (R=returned, A=accepted)"
+            nullable: true
+            computed_from:
+              transform: json_get_optional_string
+              sources:
+                - item
+              args:
+                field: "return_flag"
+
+          - name: line_status
+            type: String
+            doc: "Line status (O=open, F=fulfilled)"
+            nullable: true
+            computed_from:
+              transform: json_get_optional_string
+              sources:
+                - item
+              args:
+                field: "line_status"
+
+          - name: ship_date
+            type: String
+            doc: "Ship date (YYYY-MM-DD)"
+            nullable: true
+            computed_from:
+              transform: json_get_optional_string
+              sources:
+                - item
+              args:
+                field: "ship_date"
+
+          - name: commit_date
+            type: String
+            doc: "Commit date (YYYY-MM-DD)"
+            nullable: true
+            computed_from:
+              transform: json_get_optional_string
+              sources:
+                - item
+              args:
+                field: "commit_date"
+
+          - name: receipt_date
+            type: String
+            doc: "Receipt date (YYYY-MM-DD)"
+            nullable: true
+            computed_from:
+              transform: json_get_optional_string
+              sources:
+                - item
+              args:
+                field: "receipt_date"
+
+        # Database persistence configuration
+        persistence:
+          database:
+            conformant_table: order_line_items
+            conformant_id_column: id
+            unicity_fields:
+              - order_key
+              - line_number  # Unique within an order
+
+          primary_key:
+            name: id
+            type: Integer
+            autogenerate: true
+
+          field_overrides:
+            - name: order_key
+              type: String
+              nullable: false
+
+            - name: line_number
+              type: Integer
+              nullable: false
+
+            - name: part_key
+              type: String
+              nullable: false
+
+            - name: supplier_key
+              type: String
+              nullable: true
+
+            - name: quantity
+              type: Integer
+              nullable: false
+
+            - name: extended_price
+              type: Float
+              nullable: false
+
+            - name: discount
+              type: Float
+              nullable: true
+
+            - name: tax
+              type: Float
+              nullable: true
+
+            - name: return_flag
+              type: String
+              nullable: true
+
+            - name: line_status
+              type: String
+              nullable: true
+
+            - name: ship_date
+              type: String
+              nullable: true
+
+            - name: commit_date
+              type: String
+              nullable: true
+
+            - name: receipt_date
+              type: String
+              nullable: true
+
+    customer.yaml: |
+      # Customer entity - represents a customer/user in the system
+      # Based on TPC-H CUSTOMER table
+
+      entity:
+        name: Customer
+        type: reference  # Reference data - loaded separately, not from order processing
+        doc: "Represents a customer who can place orders (reference data)"
+
+        fields:
+          # Customer identification
+          - name: customer_key
+            type: String
+            doc: "Unique customer identifier"
+            nullable: false
+
+          - name: name
+            type: String
+            doc: "Customer name"
+            nullable: false
+
+          - name: address
+            type: String
+            doc: "Customer address"
+            nullable: true
+
+          - name: nation_key
+            type: String
+            doc: "Nation identifier"
+            nullable: true
+
+          - name: phone
+            type: String
+            doc: "Customer phone number"
+            nullable: true
+
+          - name: account_balance
+            type: Float
+            doc: "Customer account balance"
+            nullable: false
+
+          - name: market_segment
+            type: String
+            doc: "Market segment (e.g., AUTOMOBILE, BUILDING, FURNITURE)"
+            nullable: true
+
+          - name: comment
+            type: String
+            doc: "Customer comments"
+            nullable: true
+
+        # Database persistence configuration
+        persistence:
+          database:
+            conformant_table: customers
+            conformant_id_column: id
+            unicity_fields:
+              - customer_key  # Ensure unique customer keys
+
+          primary_key:
+            name: id
+            type: Integer
+            autogenerate: true
+
+          field_overrides:
+            - name: customer_key
+              type: String
+              nullable: false
+
+            - name: name
+              type: String
+              nullable: false
+
+            - name: address
+              type: String
+              nullable: true
+
+            - name: nation_key
+              type: String
+              nullable: true
+
+            - name: phone
+              type: String
+              nullable: true
+
+            - name: account_balance
+              type: Float
+              nullable: false
+
+            - name: market_segment
+              type: String
+              nullable: true
+
+            - name: comment
+              type: String
+              nullable: true
+
+    product.yaml: |
+      # Product entity - represents a product/part in the system
+      # Based on TPC-H PART table
+
+      entity:
+        name: Product
+        type: reference  # Reference data - loaded separately, not from order processing
+        doc: "Represents a product that can be ordered (reference data)"
+
+        fields:
+          # Product identification
+          - name: part_key
+            type: String
+            doc: "Unique part/product identifier"
+            nullable: false
+
+          - name: name
+            type: String
+            doc: "Product name"
+            nullable: false
+
+          - name: manufacturer
+            type: String
+            doc: "Manufacturer name"
+            nullable: true
+
+          - name: brand
+            type: String
+            doc: "Product brand"
+            nullable: true
+
+          - name: product_type
+            type: String
+            doc: "Type of product"
+            nullable: true
+
+          - name: size
+            type: Integer
+            doc: "Product size"
+            nullable: true
+
+          - name: container
+            type: String
+            doc: "Container type (e.g., SM CASE, LG BOX)"
+            nullable: true
+
+          - name: retail_price
+            type: Float
+            doc: "Retail price"
+            nullable: false
+
+          - name: comment
+            type: String
+            doc: "Product comments"
+            nullable: true
+
+        # Database persistence configuration
+        persistence:
+          database:
+            conformant_table: products
+            conformant_id_column: id
+            unicity_fields:
+              - part_key  # Ensure unique product keys
+
+          primary_key:
+            name: id
+            type: Integer
+            autogenerate: true
+
+          field_overrides:
+            - name: part_key
+              type: String
+              nullable: false
+
+            - name: name
+              type: String
+              nullable: false
+
+            - name: manufacturer
+              type: String
+              nullable: true
+
+            - name: brand
+              type: String
+              nullable: true
+
+            - name: product_type
+              type: String
+              nullable: true
+
+            - name: size
+              type: Integer
+              nullable: true
+
+            - name: container
+              type: String
+              nullable: true
+
+            - name: retail_price
+              type: Float
+              nullable: false
+
+            - name: comment
+              type: String
+              nullable: true

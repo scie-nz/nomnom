@@ -34,9 +34,15 @@ spec:
         pathType: {{ .pathType }}
         backend:
           service:
-            name: {{ .serviceName }}
+            {{- if eq .backend.service "ingestion-api" }}
+            name: {{ include "nomnom.ingestion-api.fullname" $ }}
+            {{- else if eq .backend.service "dashboard" }}
+            name: {{ include "nomnom.dashboard.fullname" $ }}
+            {{- else }}
+            name: {{ .backend.service }}
+            {{- end }}
             port:
-              number: {{ .servicePort }}
+              number: {{ .backend.port }}
       {{- end }}
   {{- end }}
 {{- end }}
