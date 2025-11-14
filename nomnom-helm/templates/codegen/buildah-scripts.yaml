@@ -1,0 +1,39 @@
+{{- if .Values.codegen.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nomnom.fullname" . }}-buildah-scripts
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: codegen
+data:
+  build.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Starting build for component: ${COMPONENT}"
+    echo "Registry: ${REGISTRY}"
+
+    # Copy entities from ConfigMaps to the expected location
+    mkdir -p /workspace/git/config/examples/tpch/entities
+    {{- range $filename, $content := .Values.codegen.entities }}
+    cp /entities/{{ $filename }} /workspace/git/config/examples/tpch/entities/
+    {{- end }}
+
+    # Build with buildah
+    buildah --storage-driver=vfs build \
+      --format=docker \
+      --build-arg COMPONENT=${COMPONENT} \
+      -f /workspace/git/Dockerfile.component \
+      -t ${REGISTRY}/nomnom-${COMPONENT}:${TAG} \
+      /workspace/git
+
+    # Push to registry
+    buildah --storage-driver=vfs push \
+      --tls-verify=false \
+      ${REGISTRY}/nomnom-${COMPONENT}:${TAG}
+
+    echo "Build complete!"
+{{- end }}

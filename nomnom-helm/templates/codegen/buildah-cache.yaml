@@ -1,0 +1,20 @@
+{{- if .Values.codegen.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "nomnom.fullname" . }}-buildah-cache
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: codegen
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.codegen.buildah.cache.storageClass }}
+  storageClassName: {{ .Values.codegen.buildah.cache.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.codegen.buildah.cache.size }}
+{{- end }}
