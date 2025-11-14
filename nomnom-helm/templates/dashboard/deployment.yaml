@@ -1,0 +1,53 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nomnom.dashboard.fullname" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.dashboard.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.dashboard.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nomnom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dashboard
+  template:
+    metadata:
+      labels:
+        {{- include "nomnom.dashboard.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: dashboard
+        image: "{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag }}"
+        imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.dashboard.port }}
+          name: http
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          value: {{ include "nomnom.database.url" . | quote }}
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: {{ .Values.dashboard.port | quote }}
+        - name: RUST_LOG
+          value: {{ .Values.dashboard.logLevel | default "info" | quote }}
+        {{- if .Values.dashboard.healthCheck }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.dashboard.healthCheck.liveness.path }}
+            port: http
+          initialDelaySeconds: {{ .Values.dashboard.healthCheck.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.dashboard.healthCheck.liveness.periodSeconds }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.dashboard.healthCheck.readiness.path }}
+            port: http
+          initialDelaySeconds: {{ .Values.dashboard.healthCheck.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.dashboard.healthCheck.readiness.periodSeconds }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.dashboard.resources | nindent 10 }}
+{{- end }}
