@@ -32,6 +32,7 @@ pub struct ForeignKeyConfig {
 
 /// Database configuration for persistent entities
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     #[serde(default)]
     pub legacy_table: Option<String>,
@@ -67,6 +68,7 @@ pub struct FieldOverride {
 
 /// Persistence configuration wrapper
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PersistenceConfig {
     #[serde(default)]
     pub database: Option<DatabaseConfig>,
@@ -201,6 +203,7 @@ pub struct ComputedFrom {
 
 /// Field definition in entity YAML
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FieldDef {
     /// Field name
     pub name: String,
@@ -261,6 +264,7 @@ pub struct RepeatedFor {
 
 /// Parent definition with source metadata
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ParentDef {
     #[serde(default)]
     pub name: String,
@@ -289,6 +293,7 @@ pub struct DerivedFrom {
 
 /// Entity definition from YAML
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct EntityDef {
     /// Entity name
     #[serde(default)]

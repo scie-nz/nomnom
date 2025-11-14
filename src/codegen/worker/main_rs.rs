@@ -357,11 +357,20 @@ pub fn generate_main_rs(
 
             writeln!(output, "            eprintln!(\"[WORKER] Inserting {{}} into table {}\", entity_name);",
                 table_name)?;
+
+            // Build ON CONFLICT clause if unicity_fields are defined
+            let on_conflict_clause = if !db_config.unicity_fields.is_empty() {
+                format!(" ON CONFLICT ({}) DO NOTHING", db_config.unicity_fields.join(", "))
+            } else {
+                String::new()
+            };
+
             writeln!(output, "            diesel::sql_query(")?;
-            writeln!(output, "                r#\"INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING\"#",
+            writeln!(output, "                r#\"INSERT INTO {} ({}) VALUES ({}){}\"#",
                 table_name,
                 col_names.join(", "),
-                placeholders.join(", "))?;
+                placeholders.join(", "),
+                on_conflict_clause)?;
             writeln!(output, "            )")?;
 
             // Bind each field
@@ -561,6 +570,51 @@ fn collect_entity_dependencies(
     }
 }
 
+/// Validate that at most one parent entity has repetition=repeated
+fn validate_parent_repetition(
+    derived_entity: &EntityDef,
+    all_entities: &[EntityDef],
+) -> Result<(), String> {
+    use std::collections::HashMap;
+
+    // Build a map of entity names to entities for lookup
+    let entities_by_name: HashMap<String, &EntityDef> = all_entities
+        .iter()
+        .map(|e| (e.name.clone(), e))
+        .collect();
+
+    // Get all parent names for this entity
+    let parents: Vec<String> = if !derived_entity.parents.is_empty() {
+        derived_entity.parents.iter().map(|p| p.parent_type.clone()).collect()
+    } else if let Some(ref parent_name) = derived_entity.parent {
+        vec![parent_name.clone()]
+    } else {
+        Vec::new()
+    };
+
+    // Find all parents that are marked as repeated
+    let mut repeated_parents: Vec<String> = Vec::new();
+
+    for parent_name in &parents {
+        if let Some(parent_entity) = entities_by_name.get(parent_name) {
+            if parent_entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false) {
+                repeated_parents.push(parent_name.clone());
+            }
+        }
+    }
+
+    // Validate: at most one parent can be repeated
+    if repeated_parents.len() > 1 {
+        return Err(format!(
+            "Entity '{}' has multiple repeated parents: {:?}. Only one parent can be repeated.",
+            derived_entity.name,
+            repeated_parents
+        ));
+    }
+
+    Ok(())
+}
+
 /// Generate extraction and persistence logic for a single derived entity
 fn generate_derived_entity_extraction(
     output: &mut std::fs::File,
@@ -569,6 +623,10 @@ fn generate_derived_entity_extraction(
     all_entities: &[EntityDef],
 ) -> Result<(), Box<dyn Error>> {
     use std::collections::{HashMap, HashSet};
+
+    // Validate parent repetition before processing
+    validate_parent_repetition(derived_entity, all_entities)
+        .map_err(|e| format!("Validation error for entity '{}': {}", derived_entity.name, e))?;
 
     let persistence = derived_entity.persistence.as_ref().unwrap();
     let db_config = persistence.database.as_ref().unwrap();
@@ -580,9 +638,78 @@ fn generate_derived_entity_extraction(
 
     writeln!(output, "    // Process {} entities", derived_entity.name)?;
 
-    // For now, support simple single-entity extraction (not repeating)
-    // TODO: Add support for repeating derived entities (e.g., from DG1_segments)
-    writeln!(output, "    // Extract fields from root entity data")?;
+    // Detect if this entity has a repeating parent
+    let entities_by_name: HashMap<String, &EntityDef> = all_entities
+        .iter()
+        .map(|e| (e.name.clone(), e))
+        .collect();
+
+    let parents: Vec<String> = if !derived_entity.parents.is_empty() {
+        derived_entity.parents.iter().map(|p| p.parent_type.clone()).collect()
+    } else if let Some(ref parent_name) = derived_entity.parent {
+        vec![parent_name.clone()]
+    } else {
+        Vec::new()
+    };
+
+    let mut repeating_parent_name: Option<String> = None;
+    let mut repeating_field_name: Option<String> = None;
+    let mut segments_source_entity: Option<String> = None;
+
+    // Check if the derived entity itself has repeated_for configuration
+    if let Some(ref repeated_for) = derived_entity.repeated_for {
+        repeating_parent_name = Some(repeated_for.entity.clone());
+        repeating_field_name = Some(repeated_for.field.clone());
+        segments_source_entity = Some(repeated_for.entity.clone());
+    } else {
+        // Fallback: check if any parent has repetition: repeated
+        for parent_name in &parents {
+            if let Some(parent_entity) = entities_by_name.get(parent_name) {
+                if parent_entity.repetition.as_ref().map(|r| r == "repeated").unwrap_or(false) {
+                    repeating_parent_name = Some(parent_name.clone());
+
+                    // Get the field name and source entity from the parent's repeated_for
+                    if let Some(ref repeated_for) = parent_entity.repeated_for {
+                        repeating_field_name = Some(repeated_for.field.clone());
+                        segments_source_entity = Some(repeated_for.entity.clone());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    let has_repeating_parent = repeating_parent_name.is_some();
+
+    // Get each_known_as value for repeating loops
+    let each_known_as = if has_repeating_parent {
+        // First try the derived entity's own repeated_for
+        if let Some(ref repeated_for) = derived_entity.repeated_for {
+            repeated_for.each_known_as.clone()
+        } else {
+            // Fall back to checking the repeating parent entity's repeated_for
+            let parent_name = repeating_parent_name.as_ref().unwrap();
+            if let Some(parent_entity) = entities_by_name.get(parent_name.as_str()) {
+                parent_entity.repeated_for.as_ref()
+                    .expect(&format!("Parent entity {} with repetition: repeated must have repeated_for configuration", parent_name))
+                    .each_known_as.clone()
+            } else {
+                panic!("Repeating parent {} not found in entities", parent_name);
+            }
+        }
+    } else {
+        String::new()
+    };
+
+    // Compute segments variable name if we have a repeating parent
+    let segments_var = if has_repeating_parent {
+        let source_entity = segments_source_entity.as_ref().unwrap();
+        let source_snake = crate::codegen::utils::to_snake_case(source_entity);
+        let field_name = repeating_field_name.as_ref().unwrap();
+        Some(format!("{}_{}", source_snake, field_name))
+    } else {
+        None
+    };
 
     // Build a map of field names to their definitions in the full entity
     let field_defs: HashMap<String, &crate::codegen::types::FieldDef> =
@@ -681,7 +808,13 @@ fn generate_derived_entity_extraction(
     }
 
     // Generate intermediate entity instantiation (in dependency order)
+    // Non-repeating intermediate entities are extracted outside the loop
     for entity_name in &needed_entities {
+        // Skip the repeating parent - it will be generated inside the loop
+        if has_repeating_parent && Some(entity_name.as_str()) == repeating_parent_name.as_deref() {
+            continue;
+        }
+
         if let Some(intermediate_entity) = all_entities.iter().find(|e| &e.name == entity_name) {
             writeln!(output, "    // Instantiate {} entity", entity_name)?;
 
@@ -689,7 +822,8 @@ fn generate_derived_entity_extraction(
             for field in &intermediate_entity.fields {
                 if let Some(ref computed_from) = field.computed_from {
                     let var_name = format!("{}_{}", crate::codegen::utils::to_snake_case(entity_name), field.name);
-                    generate_field_extraction(output, &var_name, computed_from, root_entity, &root_param_name, field.nullable)?;
+                    // Non-repeating intermediate entities are not from repeating parents, so pass None
+                    generate_field_extraction(output, &var_name, computed_from, root_entity, &root_param_name, field.nullable, None, "    ")?;
                 }
             }
 
@@ -697,34 +831,104 @@ fn generate_derived_entity_extraction(
         }
     }
 
-    // Generate field extraction for each field in derived entity
+    // Open the loop if we have a repeating parent
+    if has_repeating_parent {
+        writeln!(output, "")?;
+        writeln!(output, "    // Loop over each {} segment and insert {} records",
+            repeating_field_name.as_ref().unwrap(), derived_entity.name)?;
+        writeln!(output, "    for {} in &{} {{", each_known_as, segments_var.as_ref().unwrap())?;
+
+        // Inside the loop, generate the repeating parent entity fields
+        if let Some(repeating_parent) = repeating_parent_name.as_ref() {
+            if let Some(intermediate_entity) = all_entities.iter().find(|e| &e.name == repeating_parent) {
+                writeln!(output, "        // Instantiate {} entity from current segment", repeating_parent)?;
+
+                // For each field in the repeating entity, generate extraction code
+                for field in &intermediate_entity.fields {
+                    if let Some(ref computed_from) = field.computed_from {
+                        let var_name = format!("{}_{}", crate::codegen::utils::to_snake_case(repeating_parent), field.name);
+                        // Repeating parent fields are extracted from the loop variable
+                        let repeating_info = Some((
+                            repeating_parent.as_str(),
+                            each_known_as.as_str(),
+                            each_known_as.as_str(),
+                        ));
+                        generate_field_extraction(output, &var_name, computed_from, root_entity, &root_param_name, field.nullable, repeating_info, "        ")?;
+                    }
+                }
+
+                writeln!(output)?;
+            }
+        }
+    } else {
+        writeln!(output, "    // Extract fields from root entity data")?;
+    }
+
+    // Check if we should skip the autogenerated ID field
+    let skip_autogenerated_id = db_config.autogenerate_conformant_id;
+    let autogenerated_id_field = if skip_autogenerated_id {
+        Some(&db_config.conformant_id_column)
+    } else {
+        None
+    };
+
+    // Prepare repeating parent info for field extraction
+    let repeating_parent_info = if has_repeating_parent {
+        Some((
+            repeating_parent_name.as_ref().unwrap().as_str(),
+            each_known_as.as_str(),
+            each_known_as.as_str(),
+        ))
+    } else {
+        None
+    };
+
+    // Determine the base indent based on whether we're in a loop
+    let base_indent = if has_repeating_parent { "        " } else { "    " };
+
+    // Generate field extraction for each field in derived entity (skip autogenerated ID)
     for field in fields {
         let field_name = &field.name;
+
+        // Skip autogenerated ID field - database will handle it
+        if let Some(auto_id) = autogenerated_id_field {
+            if field_name == auto_id {
+                continue;
+            }
+        }
+
         let is_nullable = field.nullable.unwrap_or(false);
 
         // Try to find the field definition to get computed_from information
         if let Some(field_def) = field_defs.get(field_name) {
             if let Some(ref computed_from) = field_def.computed_from {
                 // Generate extraction code based on computed_from configuration
-                generate_field_extraction(output, field_name, computed_from, root_entity, &root_param_name, is_nullable)?;
+                generate_field_extraction(output, field_name, computed_from, root_entity, &root_param_name, is_nullable, repeating_parent_info, base_indent)?;
                 continue;
             }
         }
 
         // Fallback: if no computed_from, use placeholder
         if is_nullable {
-            writeln!(output, "    let {} = None; // No computed_from configuration",
-                field_name)?;
+            writeln!(output, "{}let {}: Option<String> = None; // No computed_from configuration",
+                base_indent, field_name)?;
         } else {
-            writeln!(output, "    let {} = String::new(); // No computed_from configuration",
-                field_name)?;
+            writeln!(output, "{}let {} = String::new(); // No computed_from configuration",
+                base_indent, field_name)?;
         }
     }
 
     writeln!(output)?;
 
-    // Build column names list
+    // Build column names list (exclude autogenerated ID)
     let col_names: Vec<String> = fields.iter()
+        .filter(|f| {
+            if let Some(auto_id) = autogenerated_id_field {
+                &f.name != auto_id
+            } else {
+                true
+            }
+        })
         .map(|f| f.name.to_lowercase())
         .collect();
 
@@ -733,50 +937,88 @@ fn generate_derived_entity_extraction(
         .map(|i| format!("${}", i))
         .collect();
 
-    // Build ON CONFLICT clause if unicity_fields exist
-    let conflict_clause = if !db_config.unicity_fields.is_empty() {
-        // Collect non-unicity fields for UPDATE clause
-        let update_fields: Vec<String> = fields.iter()
-            .filter(|f| !db_config.unicity_fields.contains(&f.name))
-            .map(|f| format!("{} = EXCLUDED.{}", f.name.to_lowercase(), f.name.to_lowercase()))
-            .collect();
-
-        // If all fields are unicity fields, just use DO NOTHING
-        if update_fields.is_empty() {
-            format!("ON CONFLICT ({}) DO NOTHING", db_config.unicity_fields.join(", "))
-        } else {
-            format!("ON CONFLICT ({}) DO UPDATE SET {}",
-                db_config.unicity_fields.join(", "),
-                update_fields.join(", "))
-        }
+    // Build ON CONFLICT clause if unicity_fields are defined
+    let on_conflict_clause = if !db_config.unicity_fields.is_empty() {
+        format!(" ON CONFLICT ({}) DO NOTHING", db_config.unicity_fields.join(", "))
     } else {
-        "ON CONFLICT DO NOTHING".to_string()
+        String::new()
     };
 
-    // Generate INSERT statement
-    writeln!(output, "    // Insert {} entity", derived_entity.name)?;
-    writeln!(output, "    diesel::sql_query(")?;
-    writeln!(output, "        r#\"INSERT INTO {} ({}) VALUES ({}) {}\"#",
+    // Find string-type unicity fields to check for emptiness
+    let string_unicity_fields: Vec<String> = db_config.unicity_fields.iter()
+        .filter_map(|field_name| {
+            fields.iter().find(|f| &f.name == field_name)
+                .and_then(|f| {
+                    let field_type = f.field_type.as_deref().unwrap_or("String");
+                    if field_type == "String" {
+                        Some(field_name.clone())
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect();
+
+    // Generate conditional INSERT based on string unicity fields
+    // Only insert if ALL string unicity fields have non-empty values
+    let base_indent = if has_repeating_parent { "        " } else { "    " };
+    let query_indent = if has_repeating_parent { "            " } else { "        " };
+
+    if !string_unicity_fields.is_empty() {
+        writeln!(output, "{}// Insert {} entity only if all string unicity fields are non-empty", base_indent, derived_entity.name)?;
+        let conditions: Vec<String> = string_unicity_fields.iter()
+            .map(|f| format!("({}.is_some() && {}.as_ref().map(|s| !s.is_empty()).unwrap_or(false))", f, f))
+            .collect();
+        writeln!(output, "{}if {} {{", base_indent, conditions.join(" && "))?;
+    } else {
+        writeln!(output, "{}// Insert {} entity", base_indent, derived_entity.name)?;
+    }
+
+    writeln!(output, "{}diesel::sql_query(", base_indent)?;
+    writeln!(output, "{}r#\"INSERT INTO {} ({}) VALUES ({}){}\"#",
+        query_indent,
         table_name,
         col_names.join(", "),
         placeholders.join(", "),
-        conflict_clause)?;
-    writeln!(output, "    )")?;
+        on_conflict_clause)?;
+    writeln!(output, "{})", base_indent)?;
 
-    // Bind each field
+    // Bind each field (skip autogenerated ID)
     for field in fields {
+        // Skip autogenerated ID field
+        if let Some(auto_id) = autogenerated_id_field {
+            if &field.name == auto_id {
+                continue;
+            }
+        }
+
         let field_type_str = field.field_type.as_deref().unwrap_or("String");
         let diesel_type = map_to_diesel_type(field_type_str);
         let is_nullable = field.nullable.unwrap_or(false);
 
         if is_nullable {
-            writeln!(output, "    .bind::<Nullable<{}>, _>(&{})", diesel_type, field.name)?;
+            writeln!(output, "{}.bind::<Nullable<{}>, _>(&{})", base_indent, diesel_type, field.name)?;
         } else {
-            writeln!(output, "    .bind::<{}, _>(&{})", diesel_type, field.name)?;
+            writeln!(output, "{}.bind::<{}, _>(&{})", base_indent, diesel_type, field.name)?;
         }
     }
 
-    writeln!(output, "    .execute(conn)?;")?;
+    writeln!(output, "{}.execute(conn)?;", base_indent)?;
+
+    // Close the conditional if statement
+    if !string_unicity_fields.is_empty() {
+        if has_repeating_parent {
+            writeln!(output, "        }}")?;
+        } else {
+            writeln!(output, "    }}")?;
+        }
+    }
+
+    // Close the for loop if we have repeating parent
+    if has_repeating_parent {
+        writeln!(output, "    }}")?;
+    }
+
     writeln!(output)?;
 
     Ok(())
@@ -790,6 +1032,8 @@ fn generate_field_extraction(
     root_entity: &EntityDef,
     root_param_name: &str,
     is_nullable: bool,
+    repeating_parent_info: Option<(&str, &str, &str)>, // (parent_name, segment_var, each_known_as)
+    base_indent: &str,
 ) -> Result<(), Box<dyn Error>> {
     let transform = &computed_from.transform;
     let sources = &computed_from.sources;
@@ -806,23 +1050,26 @@ fn generate_field_extraction(
         if let Some(src_field) = source_field {
             if source_entity == root_entity.name.as_str() {
                 // Direct access from root message
-                writeln!(output, "    let {} = {}{}.{}.clone();",
+                writeln!(output, "{}let {} = {}{}.{}.clone();",
+                    base_indent,
                     field_name,
                     if is_nullable { "Some(" } else { "" },
                     root_param_name,
                     src_field)?;
                 if is_nullable {
-                    writeln!(output, "    // Close Some()")?;
+                    writeln!(output, "{}// Close Some()", base_indent)?;
                 }
             } else {
                 // Access from intermediate entity variable
                 let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
-                writeln!(output, "    let {} = {}.clone();",
+                writeln!(output, "{}let {} = {}.clone();",
+                    base_indent,
                     field_name,
                     intermediate_var)?;
             }
         } else {
-            writeln!(output, "    let {} = {}; // TODO: Direct source reference",
+            writeln!(output, "{}let {} = {}; // TODO: Direct source reference",
+                base_indent,
                 field_name,
                 if is_nullable { "None" } else { "String::new()" })?;
         }
@@ -850,13 +1097,15 @@ fn generate_field_extraction(
                 // Handle Result<Option<T>> -> Option<T> for Option types
                 // Handle Result<Vec<T>, E> -> Vec<T> for List types
                 if is_nullable {
-                    writeln!(output, "    let {} = {}({}).unwrap_or(None);",
+                    writeln!(output, "{}let {} = {}({}).unwrap_or(None);",
+                        base_indent,
                         field_name,
                         transform,
                         all_args)?;
                 } else {
                     // Non-nullable - could be Vec or required type
-                    writeln!(output, "    let {} = {}({}).unwrap_or_else(|_| vec![]);",
+                    writeln!(output, "{}let {} = {}({}).unwrap_or_else(|_| vec![]);",
+                        base_indent,
                         field_name,
                         transform,
                         all_args)?;
@@ -865,27 +1114,57 @@ fn generate_field_extraction(
                 // Call transform with intermediate entity variable
                 let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
 
-                // Pass intermediate entity field as &Option<String> reference (transforms expect this signature)
+                // Unwrap the Option<String> to &str before passing to transform
                 let all_args = if args_list.is_empty() {
-                    format!("&{}", intermediate_var)
+                    format!("{}.as_ref().unwrap()", intermediate_var)
                 } else {
-                    format!("&{}, {}", intermediate_var, args_list.join(", "))
+                    format!("{}.as_ref().unwrap(), {}", intermediate_var, args_list.join(", "))
                 };
 
-                writeln!(output, "    let {} = if {}.is_some() {{ {}({}).unwrap_or(None) }} else {{ None }};",
+                writeln!(output, "{}let {} = if {}.is_some() {{ {}({}).unwrap_or(None) }} else {{ None }};",
+                    base_indent,
                     field_name,
                     intermediate_var,
                     transform,
                     all_args)?;
             }
         } else {
-            writeln!(output, "    let {}: Option<String> = {}; // TODO: Transform with direct source",
+            // No source field - this is a Direct source (e.g., FieldSource::Direct("segment"))
+            // Check if this references the loop variable for a repeating entity
+            if let Some((_repeating_parent, segment_var, each_known_as)) = repeating_parent_info {
+                if source_entity == each_known_as {
+                    // Generate transform call with segment as first argument
+                    // Note: segment_var is a String from Vec<String>, so we pass it as &str
+                    let args_list = if let Some(ref args) = computed_from.args {
+                        format_transform_args_list(args)
+                    } else {
+                        vec![]
+                    };
+
+                    let all_args = if args_list.is_empty() {
+                        format!("{}.as_str()", segment_var)
+                    } else {
+                        format!("{}.as_str(), {}", segment_var, args_list.join(", "))
+                    };
+
+                    writeln!(output, "{}let {} = {}({}).unwrap_or(None);",
+                        base_indent,
+                        field_name,
+                        transform,
+                        all_args)?;
+                    return Ok(());
+                }
+            }
+
+            writeln!(output, "{}let {}: Option<String> = {}; // TODO: Transform with direct source",
+                base_indent,
                 field_name,
                 if is_nullable { "None" } else { "Some(String::new())" })?;
         }
     } else {
         // Multiple sources - not yet implemented
-        writeln!(output, "    let {}: Option<String> = {}; // TODO: Multi-source extraction",
+        writeln!(output, "{}let {}: Option<String> = {}; // TODO: Multi-source extraction",
+            base_indent,
             field_name,
             if is_nullable { "None" } else { "Some(String::new())" })?;
     }
@@ -896,6 +1175,18 @@ fn generate_field_extraction(
 /// Format transform function arguments from YAML value as a list
 fn format_transform_args_list(args: &serde_yaml::Value) -> Vec<String> {
     match args {
+        serde_yaml::Value::Sequence(seq) => {
+            seq.iter()
+                .map(|v| {
+                    match v {
+                        serde_yaml::Value::String(s) => format!("\"{}\"", s),
+                        serde_yaml::Value::Number(n) => n.to_string(),
+                        serde_yaml::Value::Bool(b) => b.to_string(),
+                        _ => "/* unsupported */".to_string(),
+                    }
+                })
+                .collect()
+        }
         serde_yaml::Value::Mapping(map) => {
             map.iter()
                 .map(|(_, v)| {

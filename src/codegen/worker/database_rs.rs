@@ -130,13 +130,16 @@ pub fn generate_database_rs(
                 }
             }
 
-            // FIX 3: Add UNIQUE constraints for unicity_fields
+            // FIX 3: Add composite UNIQUE constraint for unicity_fields
             if let Some(ref db_config) = persistence.database {
-                for unicity_field in &db_config.unicity_fields {
-                    writeln!(output, "            ,CONSTRAINT {}_{}_unique UNIQUE ({})",
+                if !db_config.unicity_fields.is_empty() {
+                    let fields_list: Vec<String> = db_config.unicity_fields
+                        .iter()
+                        .map(|f| f.to_lowercase())
+                        .collect();
+                    writeln!(output, "            ,CONSTRAINT {}_unique UNIQUE ({})",
                         table_name,
-                        unicity_field.to_lowercase(),
-                        unicity_field.to_lowercase()
+                        fields_list.join(", ")
                     )?;
                 }
             }
