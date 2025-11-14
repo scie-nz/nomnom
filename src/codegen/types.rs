@@ -452,6 +452,338 @@ impl EntityDef {
     }
 }
 
+// ============================================================================
+// Entity Schema v1 Types (K8s-inspired, camelCase)
+// ============================================================================
+
+/// Entity Schema v1 - K8s-style top-level structure
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityV1 {
+    pub api_version: String,  // "nomnom.io/v1"
+    pub kind: String,          // "Entity"
+    pub metadata: MetadataV1,
+    pub spec: SpecV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<StatusV1>,
+}
+
+/// Metadata section (K8s-style)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataV1 {
+    pub name: String,  // Entity name in PascalCase
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub labels: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub annotations: HashMap<String, String>,
+}
+
+/// Spec section - entity specification
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecV1 {
+    #[serde(rename = "type")]
+    pub entity_type: String,  // "root" | "derived"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition: Option<String>,  // "singleton" | "repeated"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derivation: Option<DerivationV1>,
+    #[serde(default)]
+    pub fields: Vec<FieldDefV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence: Option<PersistenceV1>,
+}
+
+/// Derivation configuration v1
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DerivationV1 {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,  // Single parent (simple)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<ParentDefV1>,  // Multiple parents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeated_for: Option<RepeatedForV1>,
+}
+
+/// Parent definition v1
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParentDefV1 {
+    pub name: String,     // Variable name (camelCase)
+    pub entity: String,   // Entity type (PascalCase)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc: Option<String>,
+}
+
+/// Repeated-for specification v1
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepeatedForV1 {
+    pub entity: String,       // Parent entity name
+    pub field: String,        // Field containing array (camelCase)
+    pub item_name: String,    // Variable name for loop item
+}
+
+/// Field definition v1 - unified (no more overrides!)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldDefV1 {
+    pub name: String,         // Field name (camelCase)
+    #[serde(rename = "type")]
+    pub field_type: String,   // Logical type (lowercase)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<ConstraintsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc: Option<String>,
+}
+
+/// Field constraints v1 - unified database + validation
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstraintsV1 {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum: Option<serde_yaml::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum: Option<serde_yaml::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub r#enum: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_yaml::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_key: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indexed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique: Option<bool>,
+    // Type modifiers
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub precision: Option<usize>,  // For decimal types
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale: Option<usize>,      // For decimal types
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Box<ConstraintsV1>>,  // For array types
+}
+
+/// Field source v1 - where data comes from
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceV1 {
+    // Option 1: Copy from parent field
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy_from: Option<String>,  // Parent entity name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,      // Field name in parent
+
+    // Option 2: Transform/compute
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform: Option<String>,  // Transform function name
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<String>,        // Input sources
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<serde_yaml::Value>,  // Transform arguments
+
+    // Option 3: Constant value
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub constant: Option<serde_yaml::Value>,
+}
+
+/// Persistence configuration v1
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistenceV1 {
+    #[serde(default = "default_persistence_enabled")]
+    pub enabled: bool,
+    pub table: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexes: Vec<IndexV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unicity: Option<UnicityV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_mapping: Option<LegacyMappingV1>,
+}
+
+fn default_persistence_enabled() -> bool {
+    true
+}
+
+/// Index definition v1
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexV1 {
+    pub name: String,
+    pub fields: Vec<String>,  // Field names (camelCase)
+    #[serde(default)]
+    pub unique: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,  // "btree", "hash", "gin", "gist"
+}
+
+/// Unicity constraint v1 - for upsert logic
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnicityV1 {
+    pub fields: Vec<String>,  // Field names (camelCase)
+}
+
+/// Legacy table mapping v1 - for migration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyMappingV1 {
+    #[serde(default)]
+    pub enabled: bool,
+    pub table: String,
+    pub id_column: String,
+}
+
+/// Status section (runtime, managed by system)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusV1 {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<ConditionV1>,
+}
+
+/// Condition for status
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConditionV1 {
+    pub r#type: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+// Conversion helpers
+impl EntityV1 {
+    /// Convert v1 schema to legacy EntityDef for code generation
+    pub fn to_legacy(&self) -> EntityDef {
+        let mut entity = EntityDef {
+            name: self.metadata.name.clone(),
+            source_type: self.spec.entity_type.clone(),
+            repetition: self.spec.repetition.clone(),
+            fields: self.spec.fields.iter().map(|f| f.to_legacy()).collect(),
+            doc: self.metadata.annotations.get("description").cloned(),
+            ..Default::default()
+        };
+
+        // Convert derivation
+        if let Some(ref derivation) = self.spec.derivation {
+            entity.parent = derivation.parent.clone();
+            if !derivation.parents.is_empty() {
+                entity.parents = derivation.parents.iter().map(|p| ParentDef {
+                    name: p.name.clone(),
+                    parent_type: p.entity.clone(),
+                    source: String::new(),
+                    doc: p.doc.clone(),
+                    same_segment_as: None,
+                }).collect();
+            }
+            if let Some(ref repeated_for) = derivation.repeated_for {
+                entity.repeated_for = Some(RepeatedFor {
+                    entity: repeated_for.entity.clone(),
+                    field: repeated_for.field.clone(),
+                    each_known_as: repeated_for.item_name.clone(),
+                });
+            }
+        }
+
+        // Convert persistence
+        if let Some(ref persistence) = self.spec.persistence {
+            entity.database = Some(DatabaseConfig {
+                legacy_table: None,
+                conformant_table: persistence.table.clone(),
+                legacy_id_column: None,
+                conformant_id_column: "id".to_string(),  // Default
+                autogenerate_conformant_id: false,
+                unicity_fields: persistence.unicity
+                    .as_ref()
+                    .map(|u| u.fields.clone())
+                    .unwrap_or_default(),
+                foreign_keys: vec![],
+            });
+        }
+
+        entity
+    }
+}
+
+impl FieldDefV1 {
+    /// Convert v1 field to legacy FieldDef
+    pub fn to_legacy(&self) -> FieldDef {
+        let mut field = FieldDef {
+            name: self.name.clone(),
+            field_type: self.field_type.clone(),
+            doc: self.doc.clone(),
+            ..Default::default()
+        };
+
+        // Convert constraints
+        if let Some(ref constraints) = self.constraints {
+            field.nullable = constraints.nullable.unwrap_or(false);
+            field.primary_key = constraints.primary_key.unwrap_or(false);
+            field.index = constraints.indexed.unwrap_or(false);
+
+            // Convert max_length to args
+            if let Some(max_length) = constraints.max_length {
+                field.args = Some(vec![serde_yaml::Value::Number(max_length.into())]);
+            }
+        }
+
+        // Convert source
+        if let Some(ref source) = self.source {
+            // Copy from parent
+            if let (Some(ref copy_from), Some(ref field_name)) = (&source.copy_from, &source.field) {
+                field.extraction = Some(ExtractionConfig {
+                    lambda: None,
+                    copy_from_context: false,
+                    copy_from_source: Some(copy_from.clone()),
+                    abstract_method: None,
+                });
+            }
+
+            // Transform
+            if let Some(ref transform) = source.transform {
+                let sources: Vec<FieldSource> = source.inputs.iter()
+                    .map(|input| FieldSource::Direct(input.clone()))
+                    .collect();
+
+                field.computed_from = Some(ComputedFrom {
+                    transform: transform.clone(),
+                    sources,
+                    args: if source.args.is_empty() {
+                        None
+                    } else {
+                        Some(serde_yaml::Value::Sequence(source.args.clone()))
+                    },
+                });
+            }
+
+            // Constant
+            if let Some(ref constant) = source.constant {
+                field.constant = Some(constant.clone());
+            }
+        }
+
+        field
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,5 +823,30 @@ mod tests {
             entity.get_parents(),
             vec!["Parent1".to_string(), "Parent2".to_string()]
         );
+    }
+
+    #[test]
+    fn test_entity_v1_to_legacy_simple() {
+        let entity_v1 = EntityV1 {
+            api_version: "nomnom.io/v1".to_string(),
+            kind: "Entity".to_string(),
+            metadata: MetadataV1 {
+                name: "TestEntity".to_string(),
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+            },
+            spec: SpecV1 {
+                entity_type: "root".to_string(),
+                repetition: None,
+                derivation: None,
+                fields: vec![],
+                persistence: None,
+            },
+            status: None,
+        };
+
+        let legacy = entity_v1.to_legacy();
+        assert_eq!(legacy.name, "TestEntity");
+        assert_eq!(legacy.source_type, "root");
     }
 }

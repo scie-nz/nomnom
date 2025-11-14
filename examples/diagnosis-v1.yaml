@@ -1,0 +1,89 @@
+apiVersion: nomnom.io/v1
+kind: Entity
+metadata:
+  name: Diagnosis
+  labels:
+    domain: healthcare
+    category: clinical
+    segment: DG1
+    persistence: transient
+  annotations:
+    description: "Patient diagnosis extracted from HL7 DG1 segment"
+    owner: "clinical-data-team"
+
+spec:
+  type: derived
+  repetition: repeated
+
+  derivation:
+    repeatedFor:
+      entity: Hl7v2Message
+      field: dg1Segments
+      itemName: segment
+
+  fields:
+    - name: setId
+      type: string
+      constraints:
+        maxLength: 10
+        nullable: true
+      source:
+        transform: extractFromHl7Segment
+        inputs: [segment]
+        args: ["DG1.1"]
+      doc: "DG1-1: Set ID"
+
+    - name: diagnosisCode
+      type: string
+      constraints:
+        maxLength: 50
+        nullable: true
+      source:
+        transform: extractFromHl7Segment
+        inputs: [segment]
+        args: ["DG1.3.1"]
+      doc: "DG1-3.1: Diagnosis code (e.g., ICD-10)"
+
+    - name: diagnosisCodeText
+      type: string
+      constraints:
+        maxLength: 255
+        nullable: true
+      source:
+        transform: extractFromHl7Segment
+        inputs: [segment]
+        args: ["DG1.3.2"]
+      doc: "DG1-3.2: Diagnosis code description"
+
+    - name: diagnosisCodeSystem
+      type: string
+      constraints:
+        maxLength: 50
+        nullable: true
+      source:
+        transform: extractFromHl7Segment
+        inputs: [segment]
+        args: ["DG1.3.3"]
+      doc: "DG1-3.3: Coding system (ICD10, ICD9, etc.)"
+
+    - name: diagnosisType
+      type: string
+      constraints:
+        maxLength: 20
+        nullable: true
+      source:
+        transform: extractFromHl7Segment
+        inputs: [segment]
+        args: ["DG1.6.1"]
+      doc: "DG1-6.1: Diagnosis type (A=Admitting, W=Working, F=Final)"
+
+    - name: diagnosingClinicianId
+      type: string
+      constraints:
+        maxLength: 50
+        nullable: true
+      source:
+        transform: extractFromHl7Segment
+        inputs: [segment]
+        args: ["DG1.16.1"]
+      doc: "DG1-16.1: Diagnosing clinician ID"

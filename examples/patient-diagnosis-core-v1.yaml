@@ -1,0 +1,119 @@
+apiVersion: nomnom.io/v1
+kind: Entity
+metadata:
+  name: PatientDiagnosisCore
+  labels:
+    domain: healthcare
+    category: clinical
+    persistence: persistent
+  annotations:
+    description: "Patient diagnosis record for database persistence"
+    owner: "clinical-data-team"
+
+spec:
+  type: derived
+
+  derivation:
+    parents:
+      - name: filename
+        entity: Filename
+      - name: eventType
+        entity: EventType
+      - name: patientIdentification
+        entity: PatientIdentification
+      - name: diagnosis
+        entity: Diagnosis
+
+  fields:
+    # Business key fields
+    - name: facilityId
+      type: string
+      constraints:
+        maxLength: 255
+        nullable: false
+        indexed: true
+      source:
+        copyFrom: filename
+        field: facilityId
+      doc: "Facility identifier"
+
+    - name: patientIdentifier
+      type: string
+      constraints:
+        maxLength: 100
+        nullable: false
+        indexed: true
+      source:
+        copyFrom: patientIdentification
+        field: patientIdentifier
+      doc: "Patient MRN or account number"
+
+    - name: diagnosisCode
+      type: string
+      constraints:
+        maxLength: 50
+        nullable: true
+        indexed: true
+      source:
+        copyFrom: diagnosis
+        field: diagnosisCode
+      doc: "Diagnosis code (ICD-10, etc.)"
+
+    - name: diagnosisCodeText
+      type: string
+      constraints:
+        maxLength: 255
+        nullable: true
+      source:
+        copyFrom: diagnosis
+        field: diagnosisCodeText
+      doc: "Diagnosis description"
+
+    - name: diagnosisCodeSystem
+      type: string
+      constraints:
+        maxLength: 50
+        nullable: true
+      source:
+        copyFrom: diagnosis
+        field: diagnosisCodeSystem
+      doc: "Coding system"
+
+    - name: eventTimestamp
+      type: timestamp
+      constraints:
+        nullable: true
+      source:
+        copyFrom: eventType
+        field: eventTimestamp
+      doc: "Event occurrence timestamp"
+
+    # Audit fields
+    - name: createdAt
+      type: timestamp
+      constraints:
+        nullable: false
+        default: now()
+      doc: "Record creation timestamp"
+
+    - name: updatedAt
+      type: timestamp
+      constraints:
+        nullable: false
+        default: now()
+      doc: "Record last update timestamp"
+
+  persistence:
+    enabled: true
+    table: patient_diagnosis_conformant
+
+    indexes:
+      - name: idx_facility_patient_diagnosis
+        fields: [facilityId, patientIdentifier, diagnosisCode]
+        unique: true
+
+      - name: idx_event_timestamp
+        fields: [facilityId, eventTimestamp]
+
+    unicity:
+      fields: [facilityId, patientIdentifier, diagnosisCode]

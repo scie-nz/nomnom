@@ -2,13 +2,17 @@
 //!
 //! This module handles loading entity definitions from YAML files and
 //! parsing them into EntityDef structures.
+//!
+//! Supports both:
+//! - Entity Schema v1 (K8s-style with apiVersion, kind, metadata, spec)
+//! - Legacy format (entity wrapper with snake_case fields)
 
-use crate::codegen::types::{EntityDef, FieldDef};
+use crate::codegen::types::{EntityDef, EntityV1, FieldDef};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
-/// Wrapper for entity YAML structure
+/// Wrapper for legacy entity YAML structure
 #[derive(Debug, Deserialize)]
 struct EntitySpec {
     entity: EntityDef,
@@ -68,6 +72,9 @@ pub fn load_entities<P: AsRef<Path>>(dir: P) -> Result<Vec<EntityDef>, String> {
 
 /// Load a single entity definition from a YAML file
 ///
+/// Supports both Entity Schema v1 (K8s-style) and legacy format.
+/// Tries v1 first, then falls back to legacy format.
+///
 /// # Arguments
 ///
 /// * `path` - Path to YAML file
@@ -81,8 +88,16 @@ pub fn load_entity<P: AsRef<Path>>(path: P) -> Result<EntityDef, String> {
     let yaml_content = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
+    // Try Entity Schema v1 first (K8s-style with apiVersion, kind, metadata, spec)
+    if let Ok(entity_v1) = serde_yaml::from_str::<EntityV1>(&yaml_content) {
+        let entity = entity_v1.to_legacy();
+        validate_entity(&entity)?;
+        return Ok(entity);
+    }
+
+    // Fall back to legacy format (entity wrapper)
     let spec: EntitySpec = serde_yaml::from_str(&yaml_content)
-        .map_err(|e| format!("Failed to parse YAML: {}", e))?;
+        .map_err(|e| format!("Failed to parse YAML (tried both v1 and legacy formats): {}", e))?;
 
     // Validate entity
     validate_entity(&spec.entity)?;
