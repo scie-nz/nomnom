@@ -192,61 +192,39 @@ ingestion:
             consumer: "workers"      # Main consumer only (not DLQ)
             lagThreshold: "100"      # Scale up if > 100 msgs per pod
 
-# Dashboard backend configuration
+# Dashboard configuration (HTMX-based)
 dashboard:
-  backend:
-    enabled: true
-    image:
-      repository: localhost:5001/nomnom-dashboard-backend
-      tag: functional
-      pullPolicy: Always
+  enabled: true
+  image:
+    repository: localhost:5001/nomnom-dashboard
+    tag: latest
+    pullPolicy: Always
 
-    replicas: 2
+  replicas: 2
+  port: 8080
+  logLevel: info
+
+  service:
+    type: ClusterIP
     port: 8080
 
-    service:
-      type: ClusterIP
-      port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
-    resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
-      limits:
-        cpu: 500m
-        memory: 1Gi
-
-    healthCheck:
-      liveness:
-        path: /health
-        initialDelaySeconds: 30
-        periodSeconds: 10
-      readiness:
-        path: /api/health
-        initialDelaySeconds: 5
-        periodSeconds: 5
-
-  frontend:
-    enabled: true
-    image:
-      repository: localhost:5001/nomnom-dashboard-frontend
-      tag: functional
-      pullPolicy: Always
-
-    replicas: 2
-    port: 5173
-
-    service:
-      type: ClusterIP
-      port: 5173
-
-    resources:
-      requests:
-        cpu: 50m
-        memory: 128Mi
-      limits:
-        cpu: 200m
-        memory: 256Mi
+  healthCheck:
+    liveness:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readiness:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 5
 
 # Ingress configuration
 ingress:
@@ -262,16 +240,11 @@ ingress:
           backend:
             service: ingestion-api
             port: 8080
-        - path: /api
-          pathType: Prefix
-          backend:
-            service: dashboard-backend
-            port: 3000
         - path: /
           pathType: Prefix
           backend:
-            service: dashboard-frontend
-            port: 5173
+            service: dashboard
+            port: 8080
   tls: []
   # - secretName: nomnom-tls
   #   hosts:
@@ -297,3 +270,58 @@ keda:
   # Whether to create KEDA resources
   # KEDA operator must be installed separately
   enabled: true
+
+# In-cluster code generation and image building
+codegen:
+  # Set to true to enable in-cluster code generation
+  # This will build images using Buildah and store them in an in-cluster Zot registry
+  enabled: false
+
+  # Zot Registry Configuration
+  registry:
+    image:
+      repository: ghcr.io/project-zot/zot-linux-amd64
+      tag: latest
+      pullPolicy: IfNotPresent
+    storage:
+      size: 20Gi
+      storageClass: ""  # Use default storage class
+    dedupe: true
+    gc: true
+    gcDelay: "1h"
+    gcInterval: "24h"
+    logLevel: "info"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+  # Buildah Build Configuration
+  buildah:
+    image:
+      repository: quay.io/buildah/stable
+      tag: latest
+      pullPolicy: IfNotPresent
+    cache:
+      size: 10Gi
+      storageClass: ""  # Use default storage class
+    resources:
+      requests:
+        memory: "3Gi"
+        cpu: "2000m"
+      limits:
+        memory: "6Gi"
+        cpu: "4000m"
+    # Git repository to clone source from
+    git:
+      repository: "https://github.com/your-org/nomnom.git"
+      branch: "main"
+      # For private repos, create a secret with username and password/token:
+      # secretName: git-credentials
+
+  # Entity YAMLs - define your data model here
+  # These will be embedded into the built images
+  entities: {}

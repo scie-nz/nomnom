@@ -1,0 +1,42 @@
+{{- if .Values.codegen.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nomnom.fullname" . }}-buildah
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: codegen
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nomnom.fullname" . }}-buildah
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: codegen
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "configmaps"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nomnom.fullname" . }}-buildah
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "nomnom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: codegen
+subjects:
+- kind: ServiceAccount
+  name: {{ include "nomnom.fullname" . }}-buildah
+roleRef:
+  kind: Role
+  name: {{ include "nomnom.fullname" . }}-buildah
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
