@@ -31,6 +31,25 @@ pub fn generate_handlers_rs(
     writeln!(output, "    nats_client::NatsClient,")?;
     writeln!(output, "    message_envelope::{{MessageEnvelope, IngestionResponse, IngestionStatus}},")?;
     writeln!(output, "}};\n")?;
+
+    // Add database-agnostic UUID type handling
+    writeln!(output, "// Database-agnostic UUID type handling")?;
+    writeln!(output, "#[cfg(feature = \"postgres\")]")?;
+    writeln!(output, "type UuidSqlType = diesel::sql_types::Uuid;\n")?;
+    writeln!(output, "#[cfg(feature = \"mysql\")]")?;
+    writeln!(output, "type UuidSqlType = diesel::sql_types::Text;\n")?;
+
+    // Add UUID conversion helper
+    writeln!(output, "#[cfg(feature = \"postgres\")]")?;
+    writeln!(output, "#[inline]")?;
+    writeln!(output, "fn uuid_to_sql_value(uuid: &uuid::Uuid) -> &uuid::Uuid {{")?;
+    writeln!(output, "    uuid")?;
+    writeln!(output, "}}\n")?;
+    writeln!(output, "#[cfg(feature = \"mysql\")]")?;
+    writeln!(output, "#[inline]")?;
+    writeln!(output, "fn uuid_to_sql_value(uuid: &uuid::Uuid) -> String {{")?;
+    writeln!(output, "    uuid.to_string()")?;
+    writeln!(output, "}}\n")?;
     writeln!(output, "/// Application state shared across handlers")?;
     writeln!(output, "#[derive(Clone)]")?;
     writeln!(output, "pub struct AppState {{")?;
@@ -138,7 +157,7 @@ fn generate_ingest_message_handler(
     writeln!(output, "        r#\"INSERT INTO message_status (message_id, entity_type, status, received_at)")?;
     writeln!(output, "           VALUES ($1, $2, $3, $4)\"#")?;
     writeln!(output, "    )")?;
-    writeln!(output, "    .bind::<diesel::sql_types::Uuid, _>(&envelope.message_id)")?;
+    writeln!(output, "    .bind::<UuidSqlType, _>(uuid_to_sql_value(&envelope.message_id))")?;
     writeln!(output, "    .bind::<diesel::sql_types::Text, _>(entity_type.as_deref().unwrap_or(\"unknown\"))")?;
     writeln!(output, "    .bind::<diesel::sql_types::Text, _>(\"accepted\")")?;
     writeln!(output, "    .bind::<diesel::sql_types::Timestamp, _>(&envelope.received_at.naive_utc())")?;
@@ -348,7 +367,7 @@ fn generate_status_check_handler(
     writeln!(output, "        r#\"SELECT entity_type, status, received_at, processed_at, retry_count, error_message")?;
     writeln!(output, "           FROM message_status WHERE message_id = $1\"#")?;
     writeln!(output, "    )")?;
-    writeln!(output, "    .bind::<diesel::sql_types::Uuid, _>(&uuid)")?;
+    writeln!(output, "    .bind::<UuidSqlType, _>(uuid_to_sql_value(&uuid))")?;
     writeln!(output, "    .get_result(&mut conn)")?;
     writeln!(output, "    .optional()?;\n")?;
 

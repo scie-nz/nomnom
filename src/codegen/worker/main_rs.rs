@@ -68,9 +68,28 @@ pub fn generate_main_rs(
     writeln!(output, "mod transforms;")?;
     writeln!(output, "mod hl7utils;\n")?;
 
-    writeln!(output, "use database::{{create_pool, ensure_tables}};")?;
+    writeln!(output, "use database::{{create_pool, ensure_tables, DbConnection}};")?;
     writeln!(output, "use parsers::{{MessageParser, ParsedMessage}};")?;
     writeln!(output, "use error::AppError;\n")?;
+
+    // Add database-agnostic UUID type handling
+    writeln!(output, "// Database-agnostic UUID type handling")?;
+    writeln!(output, "#[cfg(feature = \"postgres\")]")?;
+    writeln!(output, "type UuidSqlType = diesel::sql_types::Uuid;\n")?;
+    writeln!(output, "#[cfg(feature = \"mysql\")]")?;
+    writeln!(output, "type UuidSqlType = diesel::sql_types::Text;\n")?;
+
+    // Add UUID conversion helper
+    writeln!(output, "#[cfg(feature = \"postgres\")]")?;
+    writeln!(output, "#[inline]")?;
+    writeln!(output, "fn uuid_to_sql_value(uuid: &uuid::Uuid) -> &uuid::Uuid {{")?;
+    writeln!(output, "    uuid")?;
+    writeln!(output, "}}\n")?;
+    writeln!(output, "#[cfg(feature = \"mysql\")]")?;
+    writeln!(output, "#[inline]")?;
+    writeln!(output, "fn uuid_to_sql_value(uuid: &uuid::Uuid) -> String {{")?;
+    writeln!(output, "    uuid.to_string()")?;
+    writeln!(output, "}}\n")?;
 
     writeln!(output, "/// Message envelope from NATS API")?;
     writeln!(output, "#[derive(Debug, serde::Deserialize)]")?;
@@ -247,7 +266,7 @@ pub fn generate_main_rs(
     writeln!(output, "                                        )")?;
     writeln!(output, "                                        .bind::<Text, _>(\"dlq\")")?;
     writeln!(output, "                                        .bind::<Text, _>(&format!(\"Failed after {{}} attempts: {{:?}}\", delivery_count, e))")?;
-    writeln!(output, "                                        .bind::<diesel::sql_types::Uuid, _>(&uuid)")?;
+    writeln!(output, "                                        .bind::<UuidSqlType, _>(uuid_to_sql_value(&uuid))")?;
     writeln!(output, "                                        .execute(&mut conn)")?;
     writeln!(output, "                                        .ok();")?;
     writeln!(output, "                                    }}\n")?;
@@ -266,7 +285,7 @@ pub fn generate_main_rs(
     writeln!(output, "                                        )")?;
     writeln!(output, "                                        .bind::<Text, _>(\"failed\")")?;
     writeln!(output, "                                        .bind::<Text, _>(&format!(\"{{:?}}\", e))")?;
-    writeln!(output, "                                        .bind::<diesel::sql_types::Uuid, _>(&uuid)")?;
+    writeln!(output, "                                        .bind::<UuidSqlType, _>(uuid_to_sql_value(&uuid))")?;
     writeln!(output, "                                        .execute(&mut conn)")?;
     writeln!(output, "                                        .ok();")?;
     writeln!(output, "                                    }}\n")?;
@@ -318,7 +337,7 @@ pub fn generate_main_rs(
     writeln!(output, "        r#\"UPDATE message_status SET status = $1 WHERE message_id = $2\"#")?;
     writeln!(output, "    )")?;
     writeln!(output, "    .bind::<Text, _>(\"processing\")")?;
-    writeln!(output, "    .bind::<diesel::sql_types::Uuid, _>(&message_id)")?;
+    writeln!(output, "    .bind::<UuidSqlType, _>(uuid_to_sql_value(&message_id))")?;
     writeln!(output, "    .execute(&mut conn)")?;
     writeln!(output, "    .ok(); // Ignore errors - status tracking is optional\n")?;
 
@@ -462,7 +481,7 @@ pub fn generate_main_rs(
         writeln!(output, "                   WHERE message_id = $2\"#")?;
         writeln!(output, "            )")?;
         writeln!(output, "            .bind::<Text, _>(\"completed\")")?;
-        writeln!(output, "            .bind::<diesel::sql_types::Uuid, _>(&message_id)")?;
+        writeln!(output, "            .bind::<UuidSqlType, _>(uuid_to_sql_value(&message_id))")?;
         writeln!(output, "            .execute(&mut conn)")?;
         writeln!(output, "            .ok(); // Ignore errors - status tracking is optional\n")?;
 
@@ -513,7 +532,7 @@ fn generate_derived_entity_processors(
         writeln!(output, "    {}: &parsers::{}Message,",
             root_entity.name.to_lowercase(), root_entity.name)?;
         writeln!(output, "    raw_json: &serde_json::Value,")?;
-        writeln!(output, "    conn: &mut diesel::PgConnection,")?;
+        writeln!(output, "    conn: &mut DbConnection,")?;
         writeln!(output, ") -> Result<(), AppError> {{")?;
         writeln!(output, "    use transforms::*;")?;
         writeln!(output)?;
