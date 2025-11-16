@@ -1,1 +1,2 @@
 - Never change generated code. Instead, examine where the code generation is happening and what it's doing wrong.
+- you can use example messages from ~/ingestion/tests/data/messages_500 - they have proper formatted filenames
