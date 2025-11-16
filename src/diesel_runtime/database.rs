@@ -4,12 +4,22 @@
 
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
-use diesel::pg::PgConnection;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
-pub type PooledConnection = r2d2::PooledConnection<ConnectionManager<PgConnection>>;
+// Conditional imports based on database backend
+#[cfg(feature = "postgres")]
+use diesel::pg::PgConnection;
+#[cfg(feature = "postgres")]
+pub type DbConnection = PgConnection;
+
+#[cfg(feature = "mysql")]
+use diesel::mysql::MysqlConnection;
+#[cfg(feature = "mysql")]
+pub type DbConnection = MysqlConnection;
+
+pub type Pool = r2d2::Pool<ConnectionManager<DbConnection>>;
+pub type PooledConnection = r2d2::PooledConnection<ConnectionManager<DbConnection>>;
 
 /// Database connection pool manager
 pub struct Database {
@@ -20,7 +30,7 @@ impl Database {
     /// Create a new database connection pool
     ///
     /// # Arguments
-    /// * `database_url` - PostgreSQL connection string (e.g., "postgres://user:pass@localhost/db")
+    /// * `database_url` - Database connection string (e.g., "postgres://user:pass@localhost/db" or "mysql://user:pass@localhost/db")
     ///
     /// # Returns
     /// Database instance with connection pool
@@ -28,6 +38,8 @@ impl Database {
     /// # Example
     /// ```ignore
     /// let db = Database::new("postgres://postgres:password@localhost:5432/test_db")?;
+    /// // or for MySQL:
+    /// let db = Database::new("mysql://root:password@localhost:3306/test_db")?;
     /// ```
     pub fn new(database_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
         Self::new_with_config(database_url, DatabaseConfig::default())
@@ -38,7 +50,7 @@ impl Database {
         database_url: &str,
         config: DatabaseConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let manager = ConnectionManager::<PgConnection>::new(database_url);
+        let manager = ConnectionManager::<DbConnection>::new(database_url);
 
         let pool = r2d2::Pool::builder()
             .max_size(config.max_connections)

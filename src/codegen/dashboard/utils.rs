@@ -25,6 +25,29 @@ impl DatabaseType {
     pub fn is_mysql_like(&self) -> bool {
         matches!(self, DatabaseType::MySQL | DatabaseType::MariaDB)
     }
+
+    /// Detect database type from DATABASE_URL
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use nomnom::codegen::dashboard::DatabaseType;
+    ///
+    /// let db_type = DatabaseType::from_url("postgres://localhost/mydb");
+    /// assert_eq!(db_type, DatabaseType::PostgreSQL);
+    ///
+    /// let db_type = DatabaseType::from_url("mysql://localhost/mydb");
+    /// assert_eq!(db_type, DatabaseType::MySQL);
+    /// ```
+    pub fn from_url(url: &str) -> DatabaseType {
+        if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+            DatabaseType::PostgreSQL
+        } else if url.starts_with("mysql://") {
+            DatabaseType::MySQL
+        } else {
+            // Default to PostgreSQL for backward compatibility
+            DatabaseType::PostgreSQL
+        }
+    }
 }
 
 /// Dashboard configuration
@@ -83,14 +106,16 @@ pub fn entity_icon(name: &str) -> &'static str {
     let name_lower = name.to_lowercase();
 
     // Pattern matching for common entity types
-    if name_lower.contains("order") {
+    // Check more specific patterns first to avoid false matches
+    if name_lower.contains("line") {
+        // Line items should be checked before "order" or "item"
+        "📄"
+    } else if name_lower.contains("order") {
         "📦"
     } else if name_lower.contains("customer") || name_lower.contains("user") {
         "👤"
     } else if name_lower.contains("product") || name_lower.contains("item") {
         "📦"
-    } else if name_lower.contains("line") {
-        "📄"
     } else if name_lower.contains("payment") || name_lower.contains("transaction") {
         "💳"
     } else if name_lower.contains("invoice") {

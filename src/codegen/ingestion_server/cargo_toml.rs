@@ -17,6 +17,21 @@ pub fn generate_cargo_toml(
     writeln!(output, "version = \"0.1.0\"")?;
     writeln!(output, "edition = \"2021\"\n")?;
 
+    // Generate default feature based on database type
+    writeln!(output, "[features]")?;
+    match config.database_type {
+        DatabaseType::PostgreSQL => {
+            writeln!(output, "default = [\"postgres\"]")?;
+            writeln!(output, "postgres = [\"diesel/postgres\"]")?;
+            writeln!(output, "mysql = [\"diesel/mysql\"]\n")?;
+        }
+        DatabaseType::MySQL | DatabaseType::MariaDB => {
+            writeln!(output, "default = [\"mysql\"]")?;
+            writeln!(output, "postgres = [\"diesel/postgres\"]")?;
+            writeln!(output, "mysql = [\"diesel/mysql\"]\n")?;
+        }
+    }
+
     writeln!(output, "[dependencies]")?;
     writeln!(output, "# Web framework")?;
     writeln!(output, "axum = \"0.7\"")?;
@@ -30,14 +45,7 @@ pub fn generate_cargo_toml(
     writeln!(output, "base64 = \"0.21\"\n")?;
 
     writeln!(output, "# Database")?;
-    match config.database_type {
-        DatabaseType::PostgreSQL => {
-            writeln!(output, "diesel = {{ version = \"2\", features = [\"postgres\", \"r2d2\", \"chrono\", \"numeric\", \"uuid\"] }}")?;
-        }
-        DatabaseType::MySQL | DatabaseType::MariaDB => {
-            writeln!(output, "diesel = {{ version = \"2\", features = [\"mysql\", \"r2d2\", \"chrono\", \"numeric\", \"uuid\"] }}")?;
-        }
-    }
+    writeln!(output, "diesel = {{ version = \"2\", features = [\"r2d2\", \"chrono\", \"numeric\", \"uuid\"] }}")?;
     writeln!(output, "r2d2 = \"0.8\"\n")?;
 
     writeln!(output, "# Date/Time and numbers")?;

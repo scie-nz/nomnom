@@ -38,7 +38,7 @@ pub use transform_codegen::{
 pub use project_config::{
     ProjectConfig, ProjectMetadata, PythonConfig, RustConfig, Dependency,
     BuildConfig as ProjectBuildConfig, BuildProjectInfo, RustPackageConfig, PythonPackageConfig,
-    DependencyConfig, BuildPathsConfig, BuildOutputsConfig, BuildTransformsConfig,
+    DependencyConfig, DatabaseConfig, BuildPathsConfig, BuildOutputsConfig, BuildTransformsConfig,
     BuildHelperConfig,
 };
 // Keep old build_config exports for backward compatibility (deprecated)

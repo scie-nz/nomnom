@@ -135,6 +135,18 @@ impl ProjectConfig {
     }
 }
 
+/// Database configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DatabaseConfig {
+    /// Database type: "postgresql", "mysql", or "mariadb"
+    #[serde(default)]
+    pub r#type: Option<String>,
+
+    /// Database URL (optional, can use DATABASE_URL env var)
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
 /// Simplified build configuration for build.rs usage
 ///
 /// This is a simpler schema specifically designed for build.rs scripts that need
@@ -146,6 +158,8 @@ pub struct BuildConfig {
     pub python: Option<PythonPackageConfig>,
     pub dependencies: Option<Vec<DependencyConfig>>,
     pub paths: BuildPathsConfig,
+    #[serde(default)]
+    pub database: Option<DatabaseConfig>,
     pub transforms: Option<BuildTransformsConfig>,
     pub helpers: Option<Vec<BuildHelperConfig>>,
 }

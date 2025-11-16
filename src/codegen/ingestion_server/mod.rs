@@ -40,6 +40,34 @@ impl DatabaseType {
             DatabaseType::MariaDB => "mariadb",
         }
     }
+
+    /// Check if this is MySQL or MariaDB (similar syntax)
+    pub fn is_mysql_like(&self) -> bool {
+        matches!(self, DatabaseType::MySQL | DatabaseType::MariaDB)
+    }
+
+    /// Detect database type from DATABASE_URL
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use nomnom::codegen::ingestion_server::DatabaseType;
+    ///
+    /// let db_type = DatabaseType::from_url("postgres://localhost/mydb");
+    /// assert_eq!(db_type, DatabaseType::PostgreSQL);
+    ///
+    /// let db_type = DatabaseType::from_url("mysql://localhost/mydb");
+    /// assert_eq!(db_type, DatabaseType::MySQL);
+    /// ```
+    pub fn from_url(url: &str) -> DatabaseType {
+        if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+            DatabaseType::PostgreSQL
+        } else if url.starts_with("mysql://") {
+            DatabaseType::MySQL
+        } else {
+            // Default to PostgreSQL for backward compatibility
+            DatabaseType::PostgreSQL
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

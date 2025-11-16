@@ -6,6 +6,44 @@ use std::path::Path;
 use std::error::Error;
 use std::io::Write;
 
+/// Convert field names to snake_case for SQL/Rust
+/// Handles both camelCase and already-snake_case inputs
+fn to_snake_case(s: &str) -> String {
+    // If already contains underscores (except f_ prefix), likely already snake_case
+    let stripped = if s.starts_with("f_") {
+        &s[2..]
+    } else {
+        s
+    };
+
+    // Check if already snake_case (has underscores or all lowercase)
+    if stripped.contains('_') || stripped.chars().all(|c| !c.is_uppercase()) {
+        return s.to_string();
+    }
+
+    // Convert camelCase to snake_case
+    let mut result = String::new();
+    let mut prev_lowercase = false;
+
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_uppercase() {
+            // Add underscore before uppercase if:
+            // 1. Not at start
+            // 2. Previous char was lowercase
+            // 3. OR next char is lowercase (handles "XMLParser" -> "xml_parser")
+            if i > 0 && (prev_lowercase || s.chars().nth(i + 1).map_or(false, |c| c.is_lowercase())) {
+                result.push('_');
+            }
+            result.push(ch.to_lowercase().next().unwrap());
+            prev_lowercase = false;
+        } else {
+            result.push(ch);
+            prev_lowercase = ch.is_lowercase();
+        }
+    }
+    result
+}
+
 pub fn generate_main_rs(
     entities: &[EntityDef],
     output_dir: &Path,
@@ -345,9 +383,9 @@ pub fn generate_main_rs(
             let db_config = entity.get_database_config().unwrap();
             let table_name = &db_config.conformant_table;
 
-            // Build column names list
+            // Build column names list (use snake_case for SQL)
             let col_names: Vec<String> = fields.iter()
-                .map(|f| f.name.to_lowercase())
+                .map(|f| to_snake_case(&f.name))
                 .collect();
 
             // Build placeholder list ($1, $2, ...)
@@ -358,9 +396,12 @@ pub fn generate_main_rs(
             writeln!(output, "            eprintln!(\"[WORKER] Inserting {{}} into table {}\", entity_name);",
                 table_name)?;
 
-            // Build ON CONFLICT clause if unicity_fields are defined
+            // Build ON CONFLICT clause if unicity_fields are defined (use snake_case for SQL)
             let on_conflict_clause = if !db_config.unicity_fields.is_empty() {
-                format!(" ON CONFLICT ({}) DO NOTHING", db_config.unicity_fields.join(", "))
+                let snake_case_fields: Vec<String> = db_config.unicity_fields.iter()
+                    .map(|f| to_snake_case(f))
+                    .collect();
+                format!(" ON CONFLICT ({}) DO NOTHING", snake_case_fields.join(", "))
             } else {
                 String::new()
             };
@@ -822,8 +863,10 @@ fn generate_derived_entity_extraction(
             for field in &intermediate_entity.fields {
                 if let Some(ref computed_from) = field.computed_from {
                     let var_name = format!("{}_{}", crate::codegen::utils::to_snake_case(entity_name), field.name);
+                    let field_type_str = field.field_type.as_str();
+                    let is_nullable = field.nullable;
                     // Non-repeating intermediate entities are not from repeating parents, so pass None
-                    generate_field_extraction(output, &var_name, computed_from, root_entity, &root_param_name, field.nullable, None, "    ")?;
+                    generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, None, "    ")?;
                 }
             }
 
@@ -847,13 +890,15 @@ fn generate_derived_entity_extraction(
                 for field in &intermediate_entity.fields {
                     if let Some(ref computed_from) = field.computed_from {
                         let var_name = format!("{}_{}", crate::codegen::utils::to_snake_case(repeating_parent), field.name);
+                        let field_type_str = field.field_type.as_str();
+                        let is_nullable = field.nullable;
                         // Repeating parent fields are extracted from the loop variable
                         let repeating_info = Some((
                             repeating_parent.as_str(),
                             each_known_as.as_str(),
                             each_known_as.as_str(),
                         ));
-                        generate_field_extraction(output, &var_name, computed_from, root_entity, &root_param_name, field.nullable, repeating_info, "        ")?;
+                        generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_info, "        ")?;
                     }
                 }
 
@@ -886,24 +931,29 @@ fn generate_derived_entity_extraction(
     // Determine the base indent based on whether we're in a loop
     let base_indent = if has_repeating_parent { "        " } else { "    " };
 
-    // Generate field extraction for each field in derived entity (skip autogenerated ID)
+    // Generate field extraction for each field in derived entity (skip autogenerated ID unless it has computed_from)
     for field in fields {
         let field_name = &field.name;
+        let is_nullable = field.nullable.unwrap_or(false);
 
-        // Skip autogenerated ID field - database will handle it
+        // Check if this field has computed_from defined
+        let has_computed_from = field_defs.get(field_name)
+            .and_then(|f| f.computed_from.as_ref())
+            .is_some();
+
+        // Skip autogenerated ID field ONLY if it doesn't have computed_from (database will handle it)
         if let Some(auto_id) = autogenerated_id_field {
-            if field_name == auto_id {
+            if field_name == auto_id && !has_computed_from {
                 continue;
             }
         }
-
-        let is_nullable = field.nullable.unwrap_or(false);
 
         // Try to find the field definition to get computed_from information
         if let Some(field_def) = field_defs.get(field_name) {
             if let Some(ref computed_from) = field_def.computed_from {
                 // Generate extraction code based on computed_from configuration
-                generate_field_extraction(output, field_name, computed_from, root_entity, &root_param_name, is_nullable, repeating_parent_info, base_indent)?;
+                let field_type_str = field_def.field_type.as_str();
+                generate_field_extraction(output, field_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_parent_info, base_indent)?;
                 continue;
             }
         }
@@ -920,7 +970,7 @@ fn generate_derived_entity_extraction(
 
     writeln!(output)?;
 
-    // Build column names list (exclude autogenerated ID)
+    // Build column names list (exclude autogenerated ID, use snake_case for SQL)
     let col_names: Vec<String> = fields.iter()
         .filter(|f| {
             if let Some(auto_id) = autogenerated_id_field {
@@ -929,7 +979,7 @@ fn generate_derived_entity_extraction(
                 true
             }
         })
-        .map(|f| f.name.to_lowercase())
+        .map(|f| to_snake_case(&f.name))
         .collect();
 
     // Build placeholder list ($1, $2, ...)
@@ -937,21 +987,26 @@ fn generate_derived_entity_extraction(
         .map(|i| format!("${}", i))
         .collect();
 
-    // Build ON CONFLICT clause if unicity_fields are defined
+    // Build ON CONFLICT clause if unicity_fields are defined (use snake_case for SQL)
     let on_conflict_clause = if !db_config.unicity_fields.is_empty() {
-        format!(" ON CONFLICT ({}) DO NOTHING", db_config.unicity_fields.join(", "))
+        let snake_case_fields: Vec<String> = db_config.unicity_fields.iter()
+            .map(|f| to_snake_case(f))
+            .collect();
+        format!(" ON CONFLICT ({}) DO NOTHING", snake_case_fields.join(", "))
     } else {
         String::new()
     };
 
     // Find string-type unicity fields to check for emptiness
+    // Use field names directly (not prefixed with entity name)
     let string_unicity_fields: Vec<String> = db_config.unicity_fields.iter()
         .filter_map(|field_name| {
             fields.iter().find(|f| &f.name == field_name)
                 .and_then(|f| {
                     let field_type = f.field_type.as_deref().unwrap_or("String");
                     if field_type == "String" {
-                        Some(field_name.clone())
+                        // Use field name directly (matches the variable name created above)
+                        Some(field_name.to_string())
                     } else {
                         None
                     }
@@ -1024,10 +1079,43 @@ fn generate_derived_entity_extraction(
     Ok(())
 }
 
+/// Check if a field type is a list/vector type
+fn is_list_type(field_type: &str) -> bool {
+    field_type.starts_with("list[") || field_type.starts_with("List[") || field_type.starts_with("Vec<")
+}
+
+/// Determine the main data field for a root entity
+/// For Hl7v2MessageFile, this is "hl7v2Message"
+/// For Filename, this is "fileName"
+fn determine_root_data_field(entity: &EntityDef) -> &str {
+    // Strategy: Prioritize fields with common data payload names, then fall back to first non-nullable string
+    let priority_names = ["message", "hl7v2Message", "body", "data", "content", "text"];
+
+    // First, try to find a field with a priority name (case-insensitive)
+    for priority_name in &priority_names {
+        if let Some(field) = entity.fields.iter().find(|f| {
+            f.name.to_lowercase() == priority_name.to_lowercase()
+        }) {
+            return field.name.as_str();
+        }
+    }
+
+    // Fall back to the first non-nullable string field
+    entity.fields.iter()
+        .find(|f| {
+            let is_string = f.field_type.as_str() == "string" || f.field_type.as_str() == "String";
+            let is_required = !f.nullable;
+            is_string && is_required
+        })
+        .map(|f| f.name.as_str())
+        .unwrap_or("body") // final fallback
+}
+
 /// Generate field extraction code based on computed_from configuration
 fn generate_field_extraction(
     output: &mut std::fs::File,
     field_name: &str,
+    field_type: &str,
     computed_from: &crate::codegen::types::ComputedFrom,
     root_entity: &EntityDef,
     root_param_name: &str,
@@ -1038,40 +1126,56 @@ fn generate_field_extraction(
     let transform = &computed_from.transform;
     let sources = &computed_from.sources;
 
+    // Convert transform function name to snake_case for Rust function calls
+    let transform_fn = to_snake_case(transform);
+
     // For simple cases, generate direct extraction from root message fields
     // This handles: copy_field, extract_filename_component, etc.
 
-    if transform == "copy_field" && sources.len() == 1 {
-        // Direct copy from source field
-        let source = &sources[0];
-        let source_entity = source.source_name();
-        let source_field = source.field_name();
-
-        if let Some(src_field) = source_field {
-            if source_entity == root_entity.name.as_str() {
-                // Direct access from root message
-                writeln!(output, "{}let {} = {}{}.{}.clone();",
-                    base_indent,
-                    field_name,
-                    if is_nullable { "Some(" } else { "" },
-                    root_param_name,
-                    src_field)?;
-                if is_nullable {
-                    writeln!(output, "{}// Close Some()", base_indent)?;
-                }
-            } else {
-                // Access from intermediate entity variable
-                let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
-                writeln!(output, "{}let {} = {}.clone();",
-                    base_indent,
-                    field_name,
-                    intermediate_var)?;
-            }
-        } else {
-            writeln!(output, "{}let {} = {}; // TODO: Direct source reference",
+    // Check if sources is empty
+    if sources.is_empty() {
+        // No sources defined - generate placeholder
+        if is_list_type(field_type) {
+            writeln!(output, "{}let {}: Vec<String> = vec![]; // TODO: No sources defined for transform '{}'",
                 base_indent,
                 field_name,
-                if is_nullable { "None" } else { "String::new()" })?;
+                transform)?;
+        } else {
+            writeln!(output, "{}let {}: Option<String> = {}; // TODO: No sources defined for transform '{}'",
+                base_indent,
+                field_name,
+                if is_nullable { "None" } else { "Some(String::new())" },
+                transform)?;
+        }
+        return Ok(());
+    }
+
+    let source = &sources[0];
+    let source_field = source.field_name();
+
+    if transform == "copy_field" && sources.len() == 1 && source_field.is_some() {
+        // Direct copy from source field (only when field is specified)
+        let source_entity = source.source_name();
+        let src_field = source_field.unwrap();
+
+        if source_entity == root_entity.name.as_str() {
+            // Direct access from root message
+            writeln!(output, "{}let {} = {}{}.{}.clone();",
+                base_indent,
+                field_name,
+                if is_nullable { "Some(" } else { "" },
+                root_param_name,
+                src_field)?;
+            if is_nullable {
+                writeln!(output, "{}// Close Some()", base_indent)?;
+            }
+        } else {
+            // Access from intermediate entity variable
+            let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
+            writeln!(output, "{}let {} = {}.clone();",
+                base_indent,
+                field_name,
+                intermediate_var)?;
         }
     } else if sources.len() == 1 {
         // Transform function with arguments
@@ -1100,32 +1204,40 @@ fn generate_field_extraction(
                     writeln!(output, "{}let {} = {}({}).unwrap_or(None);",
                         base_indent,
                         field_name,
-                        transform,
+                        transform_fn,
                         all_args)?;
                 } else {
-                    // Non-nullable - could be Vec or required type
-                    writeln!(output, "{}let {} = {}({}).unwrap_or_else(|_| vec![]);",
-                        base_indent,
-                        field_name,
-                        transform,
-                        all_args)?;
+                    // Non-nullable - check if it's a list or scalar type
+                    if is_list_type(field_type) {
+                        writeln!(output, "{}let {} = {}({}).unwrap_or_else(|_| vec![]);",
+                            base_indent,
+                            field_name,
+                            transform_fn,
+                            all_args)?;
+                    } else {
+                        writeln!(output, "{}let {} = {}({}).unwrap_or_else(|_| String::new());",
+                            base_indent,
+                            field_name,
+                            transform_fn,
+                            all_args)?;
+                    }
                 }
             } else {
                 // Call transform with intermediate entity variable
                 let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
 
-                // Unwrap the Option<String> to &str before passing to transform
+                // Pass &Option<String> to transform function
                 let all_args = if args_list.is_empty() {
-                    format!("{}.as_ref().unwrap()", intermediate_var)
+                    format!("&{}", intermediate_var)
                 } else {
-                    format!("{}.as_ref().unwrap(), {}", intermediate_var, args_list.join(", "))
+                    format!("&{}, {}", intermediate_var, args_list.join(", "))
                 };
 
                 writeln!(output, "{}let {} = if {}.is_some() {{ {}({}).unwrap_or(None) }} else {{ None }};",
                     base_indent,
                     field_name,
                     intermediate_var,
-                    transform,
+                    transform_fn,
                     all_args)?;
             }
         } else {
@@ -1150,23 +1262,68 @@ fn generate_field_extraction(
                     writeln!(output, "{}let {} = {}({}).unwrap_or(None);",
                         base_indent,
                         field_name,
-                        transform,
+                        transform_fn,
                         all_args)?;
                     return Ok(());
                 }
             }
 
-            writeln!(output, "{}let {}: Option<String> = {}; // TODO: Transform with direct source",
+            // No source field - this is a Direct source (e.g., transform references entire entity)
+            // For root entity direct sources, we need to determine which field to pass
+            if source_entity == root_entity.name.as_str() {
+                let root_data_field = determine_root_data_field(root_entity);
+
+                let args_list = if let Some(ref args) = computed_from.args {
+                    format_transform_args_list(args)
+                } else {
+                    vec![]
+                };
+
+                let all_args = if args_list.is_empty() {
+                    format!("&{}.{}", root_param_name, root_data_field)
+                } else {
+                    format!("&{}.{}, {}", root_param_name, root_data_field, args_list.join(", "))
+                };
+
+                // Generate appropriate type based on field type
+                if is_list_type(field_type) {
+                    writeln!(output, "{}let {} = {}({}).unwrap_or_else(|_| vec![]);",
+                        base_indent, field_name, transform_fn, all_args)?;
+                } else if is_nullable {
+                    writeln!(output, "{}let {} = {}({}).unwrap_or(None);",
+                        base_indent, field_name, transform_fn, all_args)?;
+                } else {
+                    writeln!(output, "{}let {} = {}({}).unwrap_or_else(|_| String::new());",
+                        base_indent, field_name, transform_fn, all_args)?;
+                }
+            } else {
+                // Source is not root entity - fall back to placeholder with proper type
+                if is_list_type(field_type) {
+                    writeln!(output, "{}let {}: Vec<String> = vec![]; // TODO: Transform with direct source from {}",
+                        base_indent,
+                        field_name,
+                        source_entity)?;
+                } else {
+                    writeln!(output, "{}let {}: Option<String> = {}; // TODO: Transform with direct source from {}",
+                        base_indent,
+                        field_name,
+                        if is_nullable { "None" } else { "Some(String::new())" },
+                        source_entity)?;
+                }
+            }
+        }
+    } else {
+        // Multiple sources - not yet implemented
+        if is_list_type(field_type) {
+            writeln!(output, "{}let {}: Vec<String> = vec![]; // TODO: Multi-source extraction",
+                base_indent,
+                field_name)?;
+        } else {
+            writeln!(output, "{}let {}: Option<String> = {}; // TODO: Multi-source extraction",
                 base_indent,
                 field_name,
                 if is_nullable { "None" } else { "Some(String::new())" })?;
         }
-    } else {
-        // Multiple sources - not yet implemented
-        writeln!(output, "{}let {}: Option<String> = {}; // TODO: Multi-source extraction",
-            base_indent,
-            field_name,
-            if is_nullable { "None" } else { "Some(String::new())" })?;
     }
 
     Ok(())

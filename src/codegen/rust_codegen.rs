@@ -791,6 +791,7 @@ mod tests {
             extends: None,
             abstract_implementations: None,
             serialization: vec![],
+            prefix: None,
         };
 
         let mut output = Vec::new();
@@ -821,11 +822,13 @@ mod tests {
             extends: None,
             abstract_implementations: None,
             serialization: vec![],
+            prefix: None,
         };
 
+        let all_entities = vec![entity.clone()];
         let mut output = Vec::new();
         let config = RustCodegenConfig::default();
-        generate_entity(&mut output, &entity, &config).unwrap();
+        generate_entity(&mut output, &entity, &all_entities, &config).unwrap();
 
         let generated = String::from_utf8(output).unwrap();
         assert!(generated.contains("pub struct RootEntityCore"));
@@ -850,11 +853,13 @@ mod tests {
             extends: None,
             abstract_implementations: None,
             serialization: vec![],
+            prefix: None,
         };
 
+        let all_entities = vec![entity.clone()];
         let mut output = Vec::new();
         let config = RustCodegenConfig::default();
-        generate_entity(&mut output, &entity, &config).unwrap();
+        generate_entity(&mut output, &entity, &all_entities, &config).unwrap();
 
         let generated = String::from_utf8(output).unwrap();
         assert!(generated.contains("pub struct ChildEntityCore"));
@@ -898,11 +903,13 @@ mod tests {
             extends: None,
             abstract_implementations: None,
             serialization: vec![],
+            prefix: None,
         };
 
+        let all_entities = vec![entity.clone()];
         let mut output = Vec::new();
         let config = RustCodegenConfig::default();
-        generate_entity(&mut output, &entity, &config).unwrap();
+        generate_entity(&mut output, &entity, &all_entities, &config).unwrap();
 
         let generated = String::from_utf8(output).unwrap();
         assert!(generated.contains("pub struct MultiEntityCore"));

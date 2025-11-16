@@ -6,6 +6,44 @@ use std::path::Path;
 use std::error::Error;
 use std::io::Write;
 
+/// Convert field names to snake_case for SQL
+/// Handles both camelCase and already-snake_case inputs
+fn to_snake_case(s: &str) -> String {
+    // If already contains underscores (except f_ prefix), likely already snake_case
+    let stripped = if s.starts_with("f_") {
+        &s[2..]
+    } else {
+        s
+    };
+
+    // Check if already snake_case (has underscores or all lowercase)
+    if stripped.contains('_') || stripped.chars().all(|c| !c.is_uppercase()) {
+        return s.to_string();
+    }
+
+    // Convert camelCase to snake_case
+    let mut result = String::new();
+    let mut prev_lowercase = false;
+
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_uppercase() {
+            // Add underscore before uppercase if:
+            // 1. Not at start
+            // 2. Previous char was lowercase
+            // 3. OR next char is lowercase (handles "XMLParser" -> "xml_parser")
+            if i > 0 && (prev_lowercase || s.chars().nth(i + 1).map_or(false, |c| c.is_lowercase())) {
+                result.push('_');
+            }
+            result.push(ch.to_lowercase().next().unwrap());
+            prev_lowercase = false;
+        } else {
+            result.push(ch);
+            prev_lowercase = ch.is_lowercase();
+        }
+    }
+    result
+}
+
 pub fn generate_database_rs(
     entities: &[EntityDef],
     output_dir: &Path,
@@ -17,28 +55,29 @@ pub fn generate_database_rs(
     writeln!(output, "// Auto-generated database connection pooling")?;
     writeln!(output)?;
     writeln!(output, "use diesel::prelude::*;")?;
+    writeln!(output)?;
 
-    match config.database_type {
-        DatabaseType::PostgreSQL => {
-            writeln!(output, "use diesel::pg::PgConnection;")?;
-        }
-        DatabaseType::MySQL | DatabaseType::MariaDB => {
-            writeln!(output, "use diesel::mysql::MysqlConnection;")?;
-        }
-    }
+    // PostgreSQL imports with feature gate
+    writeln!(output, "#[cfg(feature = \"postgres\")]")?;
+    writeln!(output, "use diesel::pg::PgConnection;")?;
+    writeln!(output)?;
+
+    // MySQL imports with feature gate
+    writeln!(output, "#[cfg(feature = \"mysql\")]")?;
+    writeln!(output, "use diesel::mysql::MysqlConnection;")?;
+    writeln!(output)?;
 
     writeln!(output, "use r2d2::{{Pool, PooledConnection}};")?;
     writeln!(output, "use std::env;\n")?;
 
-    // Connection type alias
-    match config.database_type {
-        DatabaseType::PostgreSQL => {
-            writeln!(output, "pub type DbConnection = PgConnection;")?;
-        }
-        DatabaseType::MySQL | DatabaseType::MariaDB => {
-            writeln!(output, "pub type DbConnection = MysqlConnection;")?;
-        }
-    }
+    // Connection type alias with feature gates
+    writeln!(output, "#[cfg(feature = \"postgres\")]")?;
+    writeln!(output, "pub type DbConnection = PgConnection;")?;
+    writeln!(output)?;
+    writeln!(output, "#[cfg(feature = \"mysql\")]")?;
+    writeln!(output, "pub type DbConnection = MysqlConnection;")?;
+    writeln!(output)?;
+
     writeln!(output, "pub type DbPool = Pool<diesel::r2d2::ConnectionManager<DbConnection>>;")?;
     writeln!(output, "pub type DbPooledConnection = PooledConnection<diesel::r2d2::ConnectionManager<DbConnection>>;\n")?;
 
@@ -90,13 +129,23 @@ pub fn generate_database_rs(
             // FIX 1: Add primary key column FIRST if autogenerate=true
             if let Some(ref pk_config) = persistence.primary_key {
                 if pk_config.autogenerate {
-                    let pk_type = match pk_config.key_type.as_str() {
-                        "i64" | "BigInt" => "BIGSERIAL",
-                        _ => "SERIAL"
+                    let pk_type = match config.database_type {
+                        DatabaseType::PostgreSQL => {
+                            match pk_config.key_type.as_str() {
+                                "i64" | "BigInt" => "BIGSERIAL",
+                                _ => "SERIAL"
+                            }
+                        },
+                        DatabaseType::MySQL | DatabaseType::MariaDB => {
+                            match pk_config.key_type.as_str() {
+                                "i64" | "BigInt" => "BIGINT AUTO_INCREMENT",
+                                _ => "INT AUTO_INCREMENT"
+                            }
+                        }
                     };
                     field_lines.push(format!(
                         "            {} {} PRIMARY KEY",
-                        pk_config.name.to_lowercase(),
+                        to_snake_case(&pk_config.name),
                         pk_type
                     ));
                 }
@@ -104,9 +153,11 @@ pub fn generate_database_rs(
 
             // FIX 2: Add all field_overrides with proper SQL type mapping
             for field in &persistence.field_overrides {
-                let col_name = field.name.to_lowercase();
+                let col_name = to_snake_case(&field.name);
                 let field_type_str = field.field_type.as_deref().unwrap_or("String");
                 let sql_type = match field_type_str {
+                    // Note: TEXT works for both PostgreSQL and MySQL (MySQL supports TEXT since 5.0.3)
+                    // MySQL TEXT has 64KB limit vs PostgreSQL's 1GB, but this is sufficient for most use cases
                     "String" => "TEXT",
                     "i32" | "Integer" => "INTEGER",
                     "i64" | "BigInt" => "BIGINT",
@@ -114,7 +165,12 @@ pub fn generate_database_rs(
                     "bool" | "Boolean" => "BOOLEAN",
                     "NaiveDate" => "DATE",
                     "NaiveDateTime" | "DateTime" => "TIMESTAMP",
-                    "Json" | "Object" | "List[Object]" => "JSONB",
+                    "Json" | "Object" | "List[Object]" => {
+                        match config.database_type {
+                            DatabaseType::PostgreSQL => "JSONB",
+                            DatabaseType::MySQL | DatabaseType::MariaDB => "JSON",
+                        }
+                    },
                     _ => "TEXT",
                 };
 
@@ -135,7 +191,7 @@ pub fn generate_database_rs(
                 if !db_config.unicity_fields.is_empty() {
                     let fields_list: Vec<String> = db_config.unicity_fields
                         .iter()
-                        .map(|f| f.to_lowercase())
+                        .map(|f| to_snake_case(f))
                         .collect();
                     writeln!(output, "            ,CONSTRAINT {}_unique UNIQUE ({})",
                         table_name,
@@ -157,11 +213,11 @@ pub fn generate_database_rs(
                     writeln!(output, "    diesel::sql_query(r#\"")?;
                     writeln!(output, "        CREATE INDEX IF NOT EXISTS idx_{}_{}",
                         table_name,
-                        unicity_field.to_lowercase()
+                        to_snake_case(unicity_field)
                     )?;
                     writeln!(output, "        ON {}({})",
                         table_name,
-                        unicity_field.to_lowercase()
+                        to_snake_case(unicity_field)
                     )?;
                     writeln!(output, "    \"#)")?;
                     writeln!(output, "    .execute(conn)?;\n")?;
