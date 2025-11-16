@@ -7,6 +7,12 @@ project:
   version: 1.0.0
   description: "TPC-H-style order processing example using nomnom"
 
+# Database configuration (optional)
+# Precedence: CLI flag > NOMNOM_DATABASE_TYPE env var > database.type > DATABASE_URL detection > default (postgresql)
+# database:
+#   type: postgresql  # Options: postgresql, mysql, mariadb
+#   url: postgres://user:pass@localhost/dbname  # Optional, can use DATABASE_URL env var instead
+
 # Dependencies
 dependencies:
   - name: nomnom

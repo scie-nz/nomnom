@@ -66,6 +66,10 @@ enum Commands {
         /// Run tests after building
         #[arg(short, long)]
         test: bool,
+
+        /// Database type (postgresql, mysql, mariadb) - overrides config file
+        #[arg(short, long)]
+        database: Option<String>,
     },
 
     /// Generate real-time dashboard for database monitoring
@@ -130,6 +134,73 @@ enum Commands {
     },
 }
 
+/// Determine database type with precedence: CLI > ENV > config file > DATABASE_URL > default
+fn detect_database_type(
+    cli_override: Option<String>,
+    config_db_type: Option<String>,
+) -> Result<String, String> {
+    // 1. CLI flag (highest priority)
+    if let Some(db_type) = cli_override {
+        let normalized = db_type.to_lowercase();
+        if matches!(normalized.as_str(), "postgresql" | "postgres" | "pg" | "mysql" | "mariadb") {
+            println!("  ℹ Using database type from CLI flag: {}", normalized);
+            return Ok(match normalized.as_str() {
+                "postgres" | "pg" => "postgresql".to_string(),
+                other => other.to_string(),
+            });
+        } else {
+            return Err(format!(
+                "Unsupported database type: '{}'. Supported types: postgresql, mysql, mariadb",
+                db_type
+            ));
+        }
+    }
+
+    // 2. Environment variable NOMNOM_DATABASE_TYPE
+    if let Ok(db_type) = std::env::var("NOMNOM_DATABASE_TYPE") {
+        let normalized = db_type.to_lowercase();
+        if matches!(normalized.as_str(), "postgresql" | "postgres" | "pg" | "mysql" | "mariadb") {
+            println!("  ℹ Using database type from NOMNOM_DATABASE_TYPE: {}", normalized);
+            return Ok(match normalized.as_str() {
+                "postgres" | "pg" => "postgresql".to_string(),
+                other => other.to_string(),
+            });
+        }
+    }
+
+    // 3. Config file database.type
+    if let Some(db_type) = config_db_type {
+        let normalized = db_type.to_lowercase();
+        if matches!(normalized.as_str(), "postgresql" | "postgres" | "pg" | "mysql" | "mariadb") {
+            println!("  ℹ Using database type from config file: {}", normalized);
+            return Ok(match normalized.as_str() {
+                "postgres" | "pg" => "postgresql".to_string(),
+                other => other.to_string(),
+            });
+        } else {
+            return Err(format!(
+                "Unsupported database type in config: '{}'. Supported types: postgresql, mysql, mariadb",
+                db_type
+            ));
+        }
+    }
+
+    // 4. Detect from DATABASE_URL scheme
+    if let Ok(database_url) = std::env::var("DATABASE_URL") {
+        if database_url.starts_with("postgres://") || database_url.starts_with("postgresql://") {
+            println!("  ℹ Detected PostgreSQL from DATABASE_URL");
+            return Ok("postgresql".to_string());
+        } else if database_url.starts_with("mysql://") {
+            println!("  ℹ Detected MySQL from DATABASE_URL");
+            return Ok("mysql".to_string());
+        }
+    }
+
+    // 5. Default to PostgreSQL
+    println!("  ℹ Using default database type: postgresql");
+    Ok("postgresql".to_string())
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -143,8 +214,8 @@ fn main() {
         Commands::Validate { config } => {
             validate_config(config)
         }
-        Commands::BuildFromConfig { config, output, release, test } => {
-            build_from_config(config, output, release, test)
+        Commands::BuildFromConfig { config, output, release, test, database } => {
+            build_from_config(config, output, release, test, database)
         }
         Commands::GenerateDashboard { entities, output, database, backend } => {
             generate_dashboard(entities, output, database, backend)
@@ -416,6 +487,7 @@ fn build_from_config(
     output: Option<PathBuf>,
     release: bool,
     run_tests: bool,
+    database_override: Option<String>,
 ) -> Result<(), String> {
     println!("🔨 Building project from {}...", config_file.display());
 
@@ -425,6 +497,15 @@ fn build_from_config(
 
     println!("  ✓ Loaded project: {}", build_config.project.name);
     println!("  ✓ Version: {}", build_config.project.version);
+
+    // Extract database type from config file
+    let config_db_type = build_config.database
+        .as_ref()
+        .and_then(|db| db.r#type.clone());
+
+    // Detect database type with precedence: CLI > ENV > config file > DATABASE_URL > default
+    let database_type = detect_database_type(database_override, config_db_type)?;
+    println!("  ✓ Database type: {}", database_type);
 
     // Determine source root (where Cargo.toml will be written)
     let source_root = output.unwrap_or_else(|| {

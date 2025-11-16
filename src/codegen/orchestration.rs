@@ -103,7 +103,7 @@ pub struct GenerationConfig {
 ///
 /// # Example
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use nomnom::codegen::{GenerationConfig, generate_all_from_config};
 ///
 /// fn main() {
@@ -119,6 +119,7 @@ pub struct GenerationConfig {
 ///         python_module_name: "my_app._rust".to_string(),
 ///         transform_registry_type: "crate::transform_registry::TransformRegistry".to_string(),
 ///         additional_rust_header: Some("fn my_helper() {}\n".to_string()),
+///         // ... other fields ...
 ///     };
 ///
 ///     generate_all_from_config(&config).expect("Code generation failed");

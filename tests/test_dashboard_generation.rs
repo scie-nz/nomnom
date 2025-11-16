@@ -23,12 +23,13 @@ fn test_dashboard_generation() {
         }
     }
 
-    // Generate dashboard with PostgreSQL
+    // Generate dashboard with PostgreSQL and FastAPI backend
     codegen::dashboard::generate_all(
         &entities,
         test_output,
         "config/examples/tpch/entities",
         codegen::dashboard::DatabaseType::PostgreSQL,
+        codegen::dashboard::BackendType::FastAPI,
     ).expect("Dashboard generation failed");
 
     println!("\n✨ Dashboard generated to: {}", test_output.display());

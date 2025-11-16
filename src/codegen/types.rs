@@ -717,6 +717,44 @@ impl EntityV1 {
                     .unwrap_or_default(),
                 foreign_keys: vec![],
             });
+
+            // Generate field_overrides from v1 field constraints
+            let field_overrides: Vec<FieldOverride> = self.spec.fields.iter()
+                .filter_map(|field| {
+                    if let Some(ref constraints) = field.constraints {
+                        Some(FieldOverride {
+                            name: field.name.clone(),
+                            field_type: Some(field.field_type.clone()),
+                            args: if let Some(max_len) = constraints.max_length {
+                                vec![serde_yaml::Value::Number(max_len.into())]
+                            } else {
+                                vec![]
+                            },
+                            nullable: constraints.nullable,
+                            primary_key: constraints.primary_key,
+                            index: constraints.indexed,
+                            doc: field.doc.clone(),
+                        })
+                    } else {
+                        // Include field even without constraints
+                        Some(FieldOverride {
+                            name: field.name.clone(),
+                            field_type: Some(field.field_type.clone()),
+                            args: vec![],
+                            nullable: Some(false),  // Default
+                            primary_key: None,
+                            index: None,
+                            doc: field.doc.clone(),
+                        })
+                    }
+                })
+                .collect();
+
+            entity.persistence = Some(PersistenceConfig {
+                database: entity.database.clone(),
+                primary_key: None,
+                field_overrides,
+            });
         }
 
         entity

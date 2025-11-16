@@ -19,7 +19,8 @@ regex = "1.10"
 clap = { version = "4.4", features = ["derive"] }
 
 # Diesel ORM with connection pooling
-diesel = { version = "2.3", features = ["postgres", "sqlite", "r2d2"] }
+# Note: Features postgres/mysql are controlled by feature flags below
+diesel = { version = "2.3", features = ["r2d2"], default-features = false }
 r2d2 = "0.8"
 
 # Optional Python bridge
@@ -42,7 +43,10 @@ dotenv = "0.15"
 tempfile = "3.8"
 
 [features]
-default = []
+default = ["postgres"]
+postgres = ["diesel/postgres"]
+mysql = ["diesel/mysql"]
+sqlite = ["diesel/sqlite"]
 python-bridge = ["pyo3"]
 
 [lib]

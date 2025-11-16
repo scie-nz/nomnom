@@ -70,7 +70,18 @@ pub fn generate_operations(
     writeln!(output, "//! Auto-generated GetOrCreate implementations\n")?;
     writeln!(output, "use diesel::prelude::*;")?;
     writeln!(output, "use diesel::result::Error as DieselError;")?;
+    writeln!(output)?;
+    writeln!(output, "// Conditional imports based on database backend")?;
+    writeln!(output, "#[cfg(feature = \"postgres\")]")?;
     writeln!(output, "use diesel::pg::PgConnection;")?;
+    writeln!(output, "#[cfg(feature = \"postgres\")]")?;
+    writeln!(output, "type DbConnection = PgConnection;")?;
+    writeln!(output)?;
+    writeln!(output, "#[cfg(feature = \"mysql\")]")?;
+    writeln!(output, "use diesel::mysql::MysqlConnection;")?;
+    writeln!(output, "#[cfg(feature = \"mysql\")]")?;
+    writeln!(output, "type DbConnection = MysqlConnection;")?;
+    writeln!(output)?;
     writeln!(output, "use crate::models::*;")?;
     writeln!(output, "use crate::schema::*;")?;
     writeln!(output, "use crate::db::operations::GetOrCreate;\n")?;
@@ -91,7 +102,7 @@ pub fn generate_operations(
 
                         writeln!(output, "impl GetOrCreate for {} {{", entity_name)?;
                         writeln!(output, "    fn get_or_create(")?;
-                        writeln!(output, "        conn: &mut PgConnection,")?;
+                        writeln!(output, "        conn: &mut DbConnection,")?;
                         writeln!(output, "        instance: &Self,")?;
                         writeln!(output, "    ) -> Result<Self, DieselError> {{")?;
                         writeln!(output, "        use crate::schema::{}::dsl::*;", table_name)?;
