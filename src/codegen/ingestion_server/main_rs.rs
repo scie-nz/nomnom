@@ -106,7 +106,7 @@ pub fn generate_main_rs(
 
     // Count entities for logging
     let entity_count = entities.iter()
-        .filter(|e| e.is_persistent() && !e.is_abstract && e.source_type.to_lowercase() != "reference")
+        .filter(|e| e.is_persistent(entities) && !e.is_abstract && e.source_type.to_lowercase() != "reference")
         .count();
 
     writeln!(output, "    tracing::info!(\"Ready to ingest messages for {} entities\");", entity_count)?;

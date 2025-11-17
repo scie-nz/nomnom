@@ -188,7 +188,7 @@ fn generate_entities_ts(entities: &[EntityDef], output_dir: &Path) -> Result<(),
     writeln!(output, "export const ENTITIES: Entity[] = [")?;
 
     for entity in entities {
-        if !entity.is_persistent() || entity.is_abstract {
+        if !entity.is_persistent(entities) || entity.is_abstract {
             continue;
         }
 
@@ -196,7 +196,7 @@ fn generate_entities_ts(entities: &[EntityDef], output_dir: &Path) -> Result<(),
             continue;
         }
 
-        let display_config = generate_entity_display_config(entity);
+        let display_config = generate_entity_display_config(entity, entities);
 
         writeln!(output, "  {{")?;
         writeln!(output, "    name: \"{}\",", display_config.name)?;

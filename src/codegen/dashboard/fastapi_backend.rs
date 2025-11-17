@@ -230,7 +230,7 @@ fn generate_config_py(entities: &[EntityDef], output_dir: &Path) -> Result<(), B
     writeln!(output, "ENTITIES = [")?;
 
     for entity in entities {
-        if !entity.is_persistent() || entity.is_abstract {
+        if !entity.is_persistent(entities) || entity.is_abstract {
             continue;
         }
 
@@ -238,7 +238,7 @@ fn generate_config_py(entities: &[EntityDef], output_dir: &Path) -> Result<(), B
             continue;
         }
 
-        let display_config = generate_entity_display_config(entity);
+        let display_config = generate_entity_display_config(entity, entities);
 
         writeln!(output, "    {{")?;
         writeln!(output, "        \"name\": \"{}\",", display_config.name)?;

@@ -748,7 +748,7 @@ fn generate_dashboard(
     println!("  ✓ Loaded {} entities", entities.len());
 
     // Count persistent entities
-    let persistent_count = entities.iter().filter(|e| e.is_persistent()).count();
+    let persistent_count = entities.iter().filter(|e| e.is_persistent(&entities)).count();
     if persistent_count == 0 {
         return Err("No persistent entities found. Dashboard requires entities with database configuration.".to_string());
     }
@@ -757,10 +757,10 @@ fn generate_dashboard(
 
     // List persistent entities
     for entity in &entities {
-        if entity.is_persistent() && !entity.is_abstract {
+        if entity.is_persistent(&entities) && !entity.is_abstract {
             println!("    - {} (table: {})",
                 entity.name,
-                entity.get_database_config()
+                entity.get_database_config(&entities)
                     .map(|db| db.conformant_table.as_str())
                     .unwrap_or("unknown"));
         }
@@ -881,7 +881,7 @@ fn generate_ingestion_server(
 
     // Count persistent entities
     let persistent_count = entities.iter()
-        .filter(|e| e.is_persistent() && !e.is_abstract && e.source_type.to_lowercase() != "reference")
+        .filter(|e| e.is_persistent(&entities) && !e.is_abstract && e.source_type.to_lowercase() != "reference")
         .count();
 
     if persistent_count == 0 {
@@ -892,10 +892,10 @@ fn generate_ingestion_server(
 
     // List persistent entities
     for entity in &entities {
-        if entity.is_persistent() && !entity.is_abstract && entity.source_type.to_lowercase() != "reference" {
+        if entity.is_persistent(&entities) && !entity.is_abstract && entity.source_type.to_lowercase() != "reference" {
             println!("    - {} (table: {})",
                 entity.name,
-                entity.get_database_config()
+                entity.get_database_config(&entities)
                     .map(|db| db.conformant_table.as_str())
                     .unwrap_or("unknown"));
         }
@@ -1036,7 +1036,7 @@ fn generate_worker(
 
     // Count persistent entities
     let persistent_count = entities.iter()
-        .filter(|e| e.is_persistent() && !e.is_abstract && e.source_type.to_lowercase() != "reference")
+        .filter(|e| e.is_persistent(&entities) && !e.is_abstract && e.source_type.to_lowercase() != "reference")
         .count();
 
     if persistent_count == 0 {
@@ -1047,10 +1047,10 @@ fn generate_worker(
 
     // List persistent entities
     for entity in &entities {
-        if entity.is_persistent() && !entity.is_abstract && entity.source_type.to_lowercase() != "reference" {
+        if entity.is_persistent(&entities) && !entity.is_abstract && entity.source_type.to_lowercase() != "reference" {
             println!("    - {} (table: {})",
                 entity.name,
-                entity.get_database_config()
+                entity.get_database_config(&entities)
                     .map(|db| db.conformant_table.as_str())
                     .unwrap_or("unknown"));
         }

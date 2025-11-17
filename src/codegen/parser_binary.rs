@@ -47,7 +47,7 @@ pub fn generate_parser_binary(
 
     // 3. Identify permanent entities (have persistence config with database, not abstract)
     let permanent_entities: Vec<&EntityDef> = entities.iter()
-        .filter(|e| e.is_persistent() && !e.is_abstract)
+        .filter(|e| e.is_persistent(entities) && !e.is_abstract)
         .collect();
 
     // Check if database support is needed (any persistent entities exist)
@@ -62,14 +62,14 @@ pub fn generate_parser_binary(
     code.push_str(&generate_cli_struct(has_database_support));
     code.push_str(&generate_parse_results_struct(&extraction_order));
     if has_database_support {
-        code.push_str(&generate_execution_stats_struct(&extraction_order));
+        code.push_str(&generate_execution_stats_struct(&extraction_order, entities));
     }
-    code.push_str(&generate_main_function(root_entity, has_database_support, &extraction_order));
-    code.push_str(&generate_extraction_function(root_entity, &extraction_order));
+    code.push_str(&generate_main_function(root_entity, has_database_support, &extraction_order, entities));
+    code.push_str(&generate_extraction_function(root_entity, &extraction_order, entities));
     code.push_str(&generate_json_output_function(&extraction_order));
-    code.push_str(&generate_sql_output_function(&permanent_entities));
+    code.push_str(&generate_sql_output_function(&permanent_entities, entities));
     if has_database_support {
-        code.push_str(&generate_execute_to_database_function(&extraction_order, &permanent_entities));
+        code.push_str(&generate_execute_to_database_function(&extraction_order, &permanent_entities, entities));
     }
     code.push_str(&generate_sql_helpers());
 
@@ -308,7 +308,7 @@ fn generate_parse_results_struct(extraction_order: &[EntityDef]) -> String {
 }
 
 /// Generate ExecutionStats struct for database operations
-fn generate_execution_stats_struct(extraction_order: &[EntityDef]) -> String {
+fn generate_execution_stats_struct(extraction_order: &[EntityDef], all_entities: &[EntityDef]) -> String {
     let mut code = String::new();
 
     code.push_str("/// Statistics from database execution\n");
@@ -318,7 +318,7 @@ fn generate_execution_stats_struct(extraction_order: &[EntityDef]) -> String {
     // Generate fields for each persistent, non-abstract, non-reference entity
     for entity in extraction_order {
         // Skip non-persistent or abstract entities
-        if !entity.is_persistent() || entity.is_abstract {
+        if !entity.is_persistent(all_entities) || entity.is_abstract {
             continue;
         }
 
@@ -337,7 +337,7 @@ fn generate_execution_stats_struct(extraction_order: &[EntityDef]) -> String {
 }
 
 /// Generate main function
-fn generate_main_function(root_entity: &EntityDef, has_database_support: bool, extraction_order: &[EntityDef]) -> String {
+fn generate_main_function(root_entity: &EntityDef, has_database_support: bool, extraction_order: &[EntityDef], all_entities: &[EntityDef]) -> String {
     let root_snake = to_snake_case(&root_entity.name);
     let root_core = format!("{}Core", root_entity.name);
 
@@ -469,7 +469,7 @@ fn generate_main_function(root_entity: &EntityDef, has_database_support: bool, e
         // Generate verbose output for each persistent, non-abstract, non-reference entity
         for entity in extraction_order {
             // Skip non-persistent or abstract entities
-            if !entity.is_persistent() || entity.is_abstract {
+            if !entity.is_persistent(all_entities) || entity.is_abstract {
                 continue;
             }
 
@@ -513,6 +513,7 @@ fn generate_main_function(root_entity: &EntityDef, has_database_support: bool, e
 fn generate_extraction_function(
     root_entity: &EntityDef,
     extraction_order: &[EntityDef],
+    all_entities: &[EntityDef],
 ) -> String {
     let root_snake = to_snake_case(&root_entity.name);
     let root_type = format!("{}Core", root_entity.name);
@@ -530,7 +531,7 @@ fn generate_extraction_function(
     // Compute SHA for root entity if lineage tracking is enabled
     code.push_str("    if let Some(tracker) = lineage_tracker.as_mut() {\n");
     code.push_str(&format!("        let root_fields = entity_to_fields(&{});\n", root_snake));
-    let root_is_permanent = root_entity.is_persistent();
+    let root_is_permanent = root_entity.is_persistent(all_entities);
     code.push_str(&format!("        let root_sha = tracker.compute_sha(\"{}\", &root_fields, &[], {});\n", root_entity.name, root_is_permanent));
     code.push_str(&format!("        entity_shas.insert(\"{}\".to_string(), root_sha);\n", root_entity.name));
     code.push_str("    }\n\n");
@@ -577,7 +578,7 @@ fn generate_extraction_function(
             code.push_str("            let parent_shas: Vec<String> = vec![\n");
             code.push_str(&format!("                entity_shas.get(\"{}\").cloned().unwrap_or_default(),\n", parents[0]));
             code.push_str("            ];\n");
-            let is_permanent = entity.is_persistent();
+            let is_permanent = entity.is_persistent(all_entities);
             code.push_str(&format!("            let sha = tracker.compute_sha(\"{}\", &fields, &parent_shas, {});\n", entity.name, is_permanent));
             code.push_str(&format!("            entity_shas.insert(format!(\"{}[{{}}]\", idx), sha);\n", entity.name));
             code.push_str("        }\n");
@@ -671,7 +672,7 @@ fn generate_extraction_function(
                     }
                 }
                 code.push_str("            ];\n");
-                let is_permanent = entity.is_persistent();
+                let is_permanent = entity.is_persistent(all_entities);
                 code.push_str(&format!("            let sha = tracker.compute_sha(\"{}\", &fields, &parent_shas, {});\n", entity.name, is_permanent));
                 code.push_str(&format!("            entity_shas.insert(format!(\"{}[{{}}]\", {}.len()), sha);\n", entity.name, var_name));
                 code.push_str("        }\n");
@@ -720,7 +721,7 @@ fn generate_extraction_function(
             }
             code.push_str("        ];\n");
 
-            let is_permanent = entity.is_persistent();
+            let is_permanent = entity.is_persistent(all_entities);
             code.push_str(&format!("        let sha = tracker.compute_sha(\"{}\", &fields, &parent_shas, {});\n", entity.name, is_permanent));
             code.push_str(&format!("        entity_shas.insert(\"{}\".to_string(), sha);\n", entity.name));
             code.push_str("    }\n");
@@ -822,7 +823,7 @@ fn generate_json_output_function(extraction_order: &[EntityDef]) -> String {
 }
 
 /// Generate SQL output function
-fn generate_sql_output_function(permanent_entities: &[&EntityDef]) -> String {
+fn generate_sql_output_function(permanent_entities: &[&EntityDef], all_entities: &[EntityDef]) -> String {
     let mut code = String::new();
 
     code.push_str("/// Output SQL statements for permanent entities\n");
@@ -861,7 +862,7 @@ fn generate_sql_output_function(permanent_entities: &[&EntityDef]) -> String {
 
     // Generate SQL output function for each permanent entity
     for entity in permanent_entities {
-        code.push_str(&generate_entity_sql_function(entity));
+        code.push_str(&generate_entity_sql_function(entity, all_entities));
     }
 
     code
@@ -889,8 +890,8 @@ fn get_sql_cmp_function(field_type: &str, nullable: bool) -> &'static str {
 }
 
 /// Generate SQL output function for a single entity
-fn generate_entity_sql_function(entity: &EntityDef) -> String {
-    let db_config = entity.get_database_config()
+fn generate_entity_sql_function(entity: &EntityDef, all_entities: &[EntityDef]) -> String {
+    let db_config = entity.get_database_config(all_entities)
         .expect("Permanent entity must have database config");
 
     let function_name = format!("output_{}_sql", to_snake_case(&entity.name));
@@ -989,6 +990,7 @@ fn generate_entity_sql_function(entity: &EntityDef) -> String {
 fn generate_execute_to_database_function(
     extraction_order: &[EntityDef],
     permanent_entities: &[&EntityDef],
+    all_entities: &[EntityDef],
 ) -> String {
     let mut code = String::new();
 
@@ -1009,7 +1011,7 @@ fn generate_execute_to_database_function(
     // Process each persistent entity
     for entity in extraction_order {
         // Skip non-persistent or abstract entities
-        if !entity.is_persistent() || entity.is_abstract {
+        if !entity.is_persistent(all_entities) || entity.is_abstract {
             continue;
         }
 
@@ -1023,7 +1025,7 @@ fn generate_execute_to_database_function(
         let new_type_name = format!("New{}", entity.name);
         let model_type_name = entity.name.clone();
 
-        let db_config = entity.get_database_config()
+        let db_config = entity.get_database_config(all_entities)
             .expect("Persistent entity must have database config");
         let table_name = &db_config.conformant_table;
         let unicity_fields = &db_config.unicity_fields;

@@ -181,8 +181,9 @@ pub fn to_snake_case(s: &str) -> String {
 /// Generate entity display configuration
 pub fn generate_entity_display_config(
     entity: &crate::codegen::EntityDef,
+    all_entities: &[crate::codegen::EntityDef],
 ) -> EntityDisplayConfig {
-    let table = if let Some(db_config) = entity.get_database_config() {
+    let table = if let Some(db_config) = entity.get_database_config(all_entities) {
         db_config.conformant_table.clone()
     } else {
         to_snake_case(&entity.name)

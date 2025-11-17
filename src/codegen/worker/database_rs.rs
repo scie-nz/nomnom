@@ -106,7 +106,7 @@ pub fn generate_database_rs(
     // Generate CREATE TABLE statements for each persistent entity
     for entity in entities {
         // Skip entities without persistence or abstract entities
-        if !entity.is_persistent() || entity.is_abstract {
+        if !entity.is_persistent(entities) || entity.is_abstract {
             continue;
         }
 
@@ -115,7 +115,7 @@ pub fn generate_database_rs(
             continue;
         }
 
-        let db_config = entity.get_database_config().unwrap();
+        let db_config = entity.get_database_config(entities).unwrap();
         let table_name = &db_config.conformant_table;
 
         writeln!(output, "    // Create {} table", entity.name)?;
@@ -123,7 +123,18 @@ pub fn generate_database_rs(
         writeln!(output, "        CREATE TABLE IF NOT EXISTS {} (", table_name)?;
 
         // Generate fields from persistence.field_overrides
-        if let Some(ref persistence) = entity.persistence {
+        // Check this entity first, then parent entity via extends field (inheritance)
+        let persistence_ref = if let Some(ref persistence) = entity.persistence {
+            Some(persistence)
+        } else if let Some(ref parent_name) = entity.extends {
+            entities.iter()
+                .find(|e| &e.name == parent_name)
+                .and_then(|parent| parent.persistence.as_ref())
+        } else {
+            None
+        };
+
+        if let Some(persistence) = persistence_ref {
             let mut field_lines = Vec::new();
 
             // FIX 1: Add primary key column FIRST if autogenerate=true

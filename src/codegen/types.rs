@@ -393,7 +393,8 @@ impl EntityDef {
     }
 
     /// Get database configuration from either persistence.database or legacy database field
-    pub fn get_database_config(&self) -> Option<&DatabaseConfig> {
+    /// Also checks parent entities via the extends field for inheritance
+    pub fn get_database_config<'a>(&'a self, all_entities: &'a [EntityDef]) -> Option<&'a DatabaseConfig> {
         // Prefer persistence.database (new format)
         if let Some(ref persistence) = self.persistence {
             if let Some(ref db) = persistence.database {
@@ -401,12 +402,24 @@ impl EntityDef {
             }
         }
         // Fall back to legacy database field
-        self.database.as_ref()
+        if let Some(ref db) = self.database {
+            return Some(db);
+        }
+
+        // Check parent entity via extends field (inheritance)
+        if let Some(ref parent_name) = self.extends {
+            if let Some(parent_entity) = all_entities.iter().find(|e| &e.name == parent_name) {
+                return parent_entity.get_database_config(all_entities);
+            }
+        }
+
+        None
     }
 
     /// Check if entity is persistent (has database configuration)
-    pub fn is_persistent(&self) -> bool {
-        self.get_database_config().is_some()
+    /// Also checks parent entities via the extends field for inheritance
+    pub fn is_persistent(&self, all_entities: &[EntityDef]) -> bool {
+        self.get_database_config(all_entities).is_some()
     }
 
     /// Check if this entity derives from the specified ancestor (directly or indirectly)

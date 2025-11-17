@@ -231,14 +231,14 @@ fn generate_config_rs(
 
     for entity in entities {
         // Include ALL persistent entities (both root and derived)
-        if !entity.is_persistent() || entity.is_abstract {
+        if !entity.is_persistent(entities) || entity.is_abstract {
             continue;
         }
         if entity.source_type.to_lowercase() == "reference" {
             continue;
         }
 
-        let display_config = generate_entity_display_config(entity);
+        let display_config = generate_entity_display_config(entity, entities);
 
         // Get primary key field (prefer primary_key config, fall back to conformant_id_column)
         let primary_key = if let Some(ref persistence) = entity.persistence {
@@ -305,14 +305,14 @@ fn generate_polling_rs(
 
     // Spawn a task for each entity table
     for entity in entities {
-        if !entity.is_persistent() || entity.is_abstract {
+        if !entity.is_persistent(entities) || entity.is_abstract {
             continue;
         }
         if entity.source_type.to_lowercase() == "reference" {
             continue;
         }
 
-        let display_config = generate_entity_display_config(entity);
+        let display_config = generate_entity_display_config(entity, entities);
         let table_name = &display_config.table;
         let entity_name = &display_config.name;
 

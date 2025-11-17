@@ -165,6 +165,21 @@ pub fn generate_main_rs(
     writeln!(output, "        .await")?;
     writeln!(output, "        .expect(\"Failed to get/create stream\");\n")?;
 
+    writeln!(output, "    // Create ENTITIES stream for entity publishing")?;
+    writeln!(output, "    let _entities_stream = jetstream")?;
+    writeln!(output, "        .get_or_create_stream(jetstream::stream::Config {{")?;
+    writeln!(output, "            name: \"ENTITIES\".to_string(),")?;
+    writeln!(output, "            subjects: vec![\"entities.*\".to_string()],")?;
+    writeln!(output, "            max_age: Duration::from_secs(24 * 60 * 60),")?;
+    writeln!(output, "            max_bytes: 1024 * 1024 * 1024,")?;
+    writeln!(output, "            storage: jetstream::stream::StorageType::File,")?;
+    writeln!(output, "            num_replicas: 1,")?;
+    writeln!(output, "            ..Default::default()")?;
+    writeln!(output, "        }})")?;
+    writeln!(output, "        .await")?;
+    writeln!(output, "        .expect(\"Failed to get/create ENTITIES stream\");")?;
+    writeln!(output, "    tracing::info!(\"ENTITIES stream ready for entity publishing\");\n")?;
+
     writeln!(output, "    // Create or get consumer")?;
     writeln!(output, "    let consumer = stream")?;
     writeln!(output, "        .get_or_create_consumer(")?;
@@ -188,7 +203,7 @@ pub fn generate_main_rs(
 
     // Count persistent entities for logging
     let entity_count = entities.iter()
-        .filter(|e| e.is_persistent() && !e.is_abstract && e.source_type.to_lowercase() != "reference")
+        .filter(|e| e.is_persistent(entities) && !e.is_abstract && e.source_type.to_lowercase() != "reference")
         .count();
     writeln!(output, "    tracing::info!(\"Processing messages for {} entities\");", entity_count)?;
     writeln!(output)?;
@@ -396,7 +411,7 @@ pub fn generate_main_rs(
         // Check if this root entity has derived persistent entities
         let derived_entities: Vec<&EntityDef> = entities.iter()
             .filter(|e| {
-                e.is_persistent() &&
+                e.is_persistent(entities) &&
                 !e.is_root() &&
                 !e.is_abstract &&
                 e.source_type.to_lowercase() == "derived" &&
@@ -405,12 +420,11 @@ pub fn generate_main_rs(
             .collect();
 
         let has_derived_entities = !derived_entities.is_empty();
-        let is_persistent = entity.is_persistent();
+        let is_persistent = entity.is_persistent(entities);
 
-        // Skip transient root entities that have no persistent derived children
-        if !is_persistent && !has_derived_entities {
-            continue;
-        }
+        // Include ALL root entities - both persistent and transient
+        // Transient entities will be published to NATS for observability
+        // Persistent entities will be written to database AND published to NATS
 
         if has_derived_entities || is_persistent {
             writeln!(output, "        ParsedMessage::{}(ref msg) => {{", entity.name)?;
@@ -421,7 +435,7 @@ pub fn generate_main_rs(
         // Insert root entity if it's persistent
         if let Some(ref persistence) = entity.persistence {
             let fields = &persistence.field_overrides;
-            let db_config = entity.get_database_config().unwrap();
+            let db_config = entity.get_database_config(entities).unwrap();
             let table_name = &db_config.conformant_table;
 
             // Build column names list (use snake_case for SQL)
@@ -564,7 +578,7 @@ fn generate_derived_entity_processors(
         // Find derived persistent entities for this root
         let derived_entities: Vec<&EntityDef> = entities.iter()
             .filter(|e| {
-                e.is_persistent() &&
+                e.is_persistent(entities) &&
                 !e.is_root() &&
                 !e.is_abstract &&
                 e.source_type.to_lowercase() == "derived" &&
@@ -575,7 +589,7 @@ fn generate_derived_entity_processors(
         // Find derived transient entities for this root (for NATS publishing)
         let transient_entities: Vec<&EntityDef> = entities.iter()
             .filter(|e| {
-                !e.is_persistent() &&
+                !e.is_persistent(entities) &&
                 !e.is_root() &&
                 !e.is_abstract &&
                 e.source_type.to_lowercase() == "derived" &&
@@ -583,8 +597,8 @@ fn generate_derived_entity_processors(
             })
             .collect();
 
-        // Only generate processor function if there are derived persistent entities
-        if derived_entities.is_empty() {
+        // Only generate processor function if there are derived entities (persistent OR transient)
+        if derived_entities.is_empty() && transient_entities.is_empty() {
             continue;
         }
 
@@ -603,6 +617,12 @@ fn generate_derived_entity_processors(
         writeln!(output, ") -> Result<(), AppError> {{")?;
         writeln!(output, "    use transforms::*;")?;
         writeln!(output)?;
+
+        // Process each derived transient entity FIRST (publish to NATS only, no database)
+        // These must be extracted before persistent entities that depend on them
+        for transient_entity in &transient_entities {
+            generate_transient_derived_entity_extraction(output, transient_entity, root_entity, entities)?;
+        }
 
         // Process each derived persistent entity
         // (this also publishes transient intermediate entities to NATS inline)
@@ -756,10 +776,28 @@ fn generate_derived_entity_extraction(
     validate_parent_repetition(derived_entity, all_entities)
         .map_err(|e| format!("Validation error for entity '{}': {}", derived_entity.name, e))?;
 
-    let persistence = derived_entity.persistence.as_ref().unwrap();
-    let db_config = persistence.database.as_ref().unwrap();
+    // Get database config (may be inherited from parent via extends)
+    let db_config = derived_entity.get_database_config(all_entities)
+        .ok_or_else(|| format!("Entity '{}' is marked as persistent but has no database config", derived_entity.name))?;
     let table_name = &db_config.conformant_table;
-    let fields = &persistence.field_overrides;
+
+    // Get field overrides (check own persistence first, then try parent)
+    let fields = if let Some(ref persistence) = derived_entity.persistence {
+        &persistence.field_overrides
+    } else {
+        // If no own persistence, find parent and get its field overrides
+        if let Some(ref parent_name) = derived_entity.extends {
+            if let Some(parent) = all_entities.iter().find(|e| &e.name == parent_name) {
+                &parent.persistence.as_ref()
+                    .ok_or_else(|| format!("Parent '{}' has no persistence config", parent_name))?
+                    .field_overrides
+            } else {
+                return Err(format!("Parent entity '{}' not found", parent_name).into());
+            }
+        } else {
+            return Err(format!("Entity '{}' has no persistence and no parent", derived_entity.name).into());
+        }
+    };
 
     // Generate root entity parameter name (lowercase)
     let root_param_name = root_entity.name.to_lowercase();
@@ -840,10 +878,22 @@ fn generate_derived_entity_extraction(
     };
 
     // Build a map of field names to their definitions in the full entity
-    let field_defs: HashMap<String, &crate::codegen::types::FieldDef> =
-        derived_entity.fields.iter()
-            .map(|f| (f.name.clone(), f))
-            .collect();
+    // Include parent entity fields if entity extends another entity
+    let mut field_defs: HashMap<String, &crate::codegen::types::FieldDef> = HashMap::new();
+
+    // First, add parent entity fields (if extends)
+    if let Some(ref parent_name) = derived_entity.extends {
+        if let Some(parent_entity) = all_entities.iter().find(|e| &e.name == parent_name) {
+            for field in &parent_entity.fields {
+                field_defs.insert(field.name.clone(), field);
+            }
+        }
+    }
+
+    // Then, add/override with derived entity's own fields
+    for field in &derived_entity.fields {
+        field_defs.insert(field.name.clone(), field);
+    }
 
     // Track which intermediate entities we need to instantiate (with dependencies)
     let mut needed_entities: Vec<String> = Vec::new();
@@ -958,7 +1008,7 @@ fn generate_derived_entity_extraction(
             }
 
             // If this is a transient entity (no persistence), publish to NATS immediately
-            if !intermediate_entity.is_persistent() {
+            if !intermediate_entity.is_persistent(all_entities) {
                 publish_transient_entity_to_nats(output, intermediate_entity, "    ")?;
             }
 
@@ -995,7 +1045,7 @@ fn generate_derived_entity_extraction(
                 }
 
                 // If this is a transient entity (no persistence), publish to NATS immediately
-                if !intermediate_entity.is_persistent() {
+                if !intermediate_entity.is_persistent(all_entities) {
                     publish_transient_entity_to_nats(output, intermediate_entity, "        ")?;
                 }
 
@@ -1208,6 +1258,109 @@ fn generate_derived_entity_extraction(
     Ok(())
 }
 
+/// Generate extraction and NATS publishing logic for a transient derived entity
+fn generate_transient_derived_entity_extraction(
+    output: &mut std::fs::File,
+    derived_entity: &EntityDef,
+    root_entity: &EntityDef,
+    all_entities: &[EntityDef],
+) -> Result<(), Box<dyn Error>> {
+    use std::collections::{HashMap, HashSet};
+
+    writeln!(output, "    // Extract and publish transient entity: {}", derived_entity.name)?;
+
+    let entity_prefix = crate::codegen::utils::to_snake_case(&derived_entity.name);
+    let root_param_name = root_entity.name.to_lowercase();
+
+    // Build field definitions map
+    let mut field_defs: HashMap<String, &crate::codegen::types::FieldDef> = HashMap::new();
+    for field in &derived_entity.fields {
+        field_defs.insert(field.name.clone(), field);
+    }
+
+    // Collect dependencies
+    let mut needed_entities: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    // Check derivation.source_entities for dependencies
+    if let Some(ref derivation) = derived_entity.derivation {
+        if let Some(ref source_entities) = derivation.source_entities {
+            match source_entities {
+                serde_yaml::Value::Mapping(map) => {
+                    for (_key, value) in map {
+                        if let serde_yaml::Value::String(entity_name) = value {
+                            if entity_name.as_str() != root_entity.name.as_str() {
+                                collect_entity_dependencies(
+                                    entity_name.as_str(),
+                                    all_entities,
+                                    root_entity,
+                                    &mut needed_entities,
+                                    &mut seen
+                                );
+                            }
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+
+    // Check field sources for dependencies
+    for field in &derived_entity.fields {
+        if let Some(ref computed_from) = field.computed_from {
+            for source in &computed_from.sources {
+                let source_entity = source.source_name();
+                if source_entity != root_entity.name.as_str() {
+                    collect_entity_dependencies(
+                        source_entity,
+                        all_entities,
+                        root_entity,
+                        &mut needed_entities,
+                        &mut seen
+                    );
+                }
+            }
+        }
+    }
+
+    // Extract intermediate entities first (dependencies)
+    for entity_name in &needed_entities {
+        if let Some(intermediate_entity) = all_entities.iter().find(|e| &e.name == entity_name) {
+            writeln!(output, "    // Instantiate {} entity", entity_name)?;
+            for field in &intermediate_entity.fields {
+                if let Some(ref computed_from) = field.computed_from {
+                    let var_name = format!("{}_{}", crate::codegen::utils::to_snake_case(entity_name), field.name);
+                    let field_type_str = field.field_type.as_str();
+                    let is_nullable = field.nullable;
+                    generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, None, "    ")?;
+                }
+            }
+            if !intermediate_entity.is_persistent(all_entities) {
+                publish_transient_entity_to_nats(output, intermediate_entity, "    ")?;
+            }
+            writeln!(output)?;
+        }
+    }
+
+    // Extract this entity's fields (keep variables in main scope for downstream entities)
+    for field in &derived_entity.fields {
+        if let Some(ref computed_from) = field.computed_from {
+            let var_name = format!("{}_{}", entity_prefix, field.name);
+            let field_type_str = field.field_type.as_str();
+            let is_nullable = field.nullable;
+            generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, None, "    ")?;
+        }
+    }
+
+    // Publish to NATS
+    publish_transient_entity_to_nats(output, derived_entity, "    ")?;
+
+    writeln!(output)?;
+
+    Ok(())
+}
+
 /// Publish a transient entity to NATS (fields already extracted)
 fn publish_transient_entity_to_nats(
     output: &mut std::fs::File,
@@ -1242,15 +1395,20 @@ fn publish_transient_entity_to_nats(
         }
     }
 
-    writeln!(output, "{}    let entity_json_str = serde_json::to_string(&entity_json)", indent)?;
-    writeln!(output, "{}        .map_err(|e| AppError::ValidationError(format!(\"Failed to serialize {}: {{}}\", e)))?;", indent, entity_name)?;
-    writeln!(output, "{}    let stream_subject = format!(\"entities.{}\");", indent, entity_name)?;
-    writeln!(output, "{}    jetstream.publish(stream_subject.clone(), entity_json_str.into()).await", indent)?;
-    writeln!(output, "{}        .map_err(|e| {{", indent)?;
-    writeln!(output, "{}            eprintln!(\"[WORKER] Failed to publish {} to {{}}: {{:?}}\", stream_subject, e);", indent, entity_name)?;
-    writeln!(output, "{}            AppError::ValidationError(format!(\"NATS publish failed: {{}}\", e))", indent)?;
-    writeln!(output, "{}        }})?;", indent)?;
-    writeln!(output, "{}    eprintln!(\"[WORKER] ✓ Published {} to {{}}\", stream_subject);", indent, entity_name)?;
+    writeln!(output, "{}    // Only publish if entity has actual data", indent)?;
+    writeln!(output, "{}    if !entity_json.is_empty() {{", indent)?;
+    writeln!(output, "{}        let entity_json_str = serde_json::to_string(&entity_json)", indent)?;
+    writeln!(output, "{}            .map_err(|e| AppError::ValidationError(format!(\"Failed to serialize {}: {{}}\", e)))?;", indent, entity_name)?;
+    writeln!(output, "{}        let stream_subject = format!(\"entities.{}\");", indent, entity_name)?;
+    writeln!(output, "{}        jetstream.publish(stream_subject.clone(), entity_json_str.into()).await", indent)?;
+    writeln!(output, "{}            .map_err(|e| {{", indent)?;
+    writeln!(output, "{}                eprintln!(\"[WORKER] Failed to publish {} to {{}}: {{:?}}\", stream_subject, e);", indent, entity_name)?;
+    writeln!(output, "{}                AppError::ValidationError(format!(\"NATS publish failed: {{}}\", e))", indent)?;
+    writeln!(output, "{}            }})?;", indent)?;
+    writeln!(output, "{}        eprintln!(\"[WORKER] ✓ Published {} to {{}}\", stream_subject);", indent, entity_name)?;
+    writeln!(output, "{}    }} else {{", indent)?;
+    writeln!(output, "{}        eprintln!(\"[WORKER] Skipped {} (no data extracted from segments)\");", indent, entity_name)?;
+    writeln!(output, "{}    }}", indent)?;
     writeln!(output, "{}}}", indent)?;
 
     Ok(())

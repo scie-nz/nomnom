@@ -25,7 +25,7 @@ pub fn generate_sql_migrations(
 
     // Generate triggers for each persistent entity
     for entity in entities {
-        if !entity.is_persistent() || entity.is_abstract {
+        if !entity.is_persistent(entities) || entity.is_abstract {
             continue;
         }
 
@@ -34,7 +34,7 @@ pub fn generate_sql_migrations(
             continue;
         }
 
-        generate_trigger(&mut output, entity, db_type)?;
+        generate_trigger(&mut output, entity, entities, db_type)?;
         writeln!(output)?;
     }
 
@@ -96,9 +96,10 @@ fn generate_events_table(output: &mut std::fs::File, db_type: DatabaseType) -> R
 fn generate_trigger(
     output: &mut std::fs::File,
     entity: &EntityDef,
+    all_entities: &[EntityDef],
     db_type: DatabaseType,
 ) -> Result<(), Box<dyn Error>> {
-    let db_config = entity.get_database_config()
+    let db_config = entity.get_database_config(all_entities)
         .ok_or("Entity has no database configuration")?;
 
     let table_name = &db_config.conformant_table;
