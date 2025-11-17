@@ -94,9 +94,17 @@ impl DatabaseType {
 }
 
 #[derive(Debug, Clone)]
+pub struct WorkerDependency {
+    pub name: String,
+    pub path: Option<String>,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct WorkerConfig {
     pub database_type: DatabaseType,
     pub worker_name: String,
+    pub additional_dependencies: Vec<WorkerDependency>,
 }
 
 impl Default for WorkerConfig {
@@ -104,6 +112,7 @@ impl Default for WorkerConfig {
         Self {
             database_type: DatabaseType::PostgreSQL,
             worker_name: "worker".to_string(),
+            additional_dependencies: Vec::new(),
         }
     }
 }

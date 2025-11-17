@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "nomnom.fullname" . }}-nats-debug
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: nats-debug
+    {{- include "nomnom.labels" . | nindent 4 }}
+spec:
+  containers:
+  - name: nats-box
+    image: natsio/nats-box:latest
+    command: ["sleep", "infinity"]
+    env:
+    - name: NATS_URL
+      value: "nats://{{ include "nomnom.fullname" . }}-nats.{{ .Release.Namespace }}.svc.cluster.local:4222"

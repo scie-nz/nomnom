@@ -525,7 +525,8 @@ sha2 = "0.10"
 regex = "1.10"
 
 # Diesel ORM with connection pooling
-diesel = {{ version = "2.3", features = ["postgres", "sqlite", "r2d2", "chrono", "numeric"] }}
+# Backend features (postgres/mysql/mariadb) are controlled by crate features below
+diesel = {{ version = "2.3", features = ["r2d2", "chrono", "numeric"] }}
 diesel_migrations = "2.1"
 r2d2 = "0.8"
 chrono = {{ version = "0.4", features = ["serde"] }}
@@ -545,6 +546,16 @@ nomnom = {{ path = "{}", features = ["python-bridge"] }}
                 toml.push_str(&self.format_dependency(dep));
             }
         }
+
+        // Add features section
+        toml.push_str(r#"
+[features]
+default = ["postgres"]
+postgres = ["diesel/postgres"]
+mysql = ["diesel/mysql"]
+mariadb = ["diesel/mysql"]  # MariaDB uses MySQL driver
+
+"#);
 
         toml.push_str(&format!(r#"
 [build-dependencies]

@@ -66,5 +66,20 @@ pub fn generate_cargo_toml(
     writeln!(output, "once_cell = \"1\"")?;
     writeln!(output, "sha1 = \"0.10\"\n")?;
 
+    // Additional dependencies from config
+    if !config.additional_dependencies.is_empty() {
+        writeln!(output, "# Additional dependencies")?;
+        for dep in &config.additional_dependencies {
+            if let Some(ref path) = dep.path {
+                writeln!(output, "{} = {{ path = \"{}\" }}", dep.name, path)?;
+            } else if let Some(ref version) = dep.version {
+                writeln!(output, "{} = \"{}\"", dep.name, version)?;
+            } else {
+                writeln!(output, "{} = \"*\"", dep.name)?;
+            }
+        }
+        writeln!(output)?;
+    }
+
     Ok(())
 }

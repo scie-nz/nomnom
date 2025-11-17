@@ -9,6 +9,9 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct DatabaseConfig {
     conformant_table: String,
+    conformant_id_column: String,
+    #[serde(default)]
+    autogenerate_conformant_id: bool,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +143,13 @@ pub fn generate_models(
 
                         // Generate fields from field_overrides
                         for field in &persistence.field_overrides {
+                            // Skip the conformant ID if it's auto-generated
+                            if db_config.autogenerate_conformant_id {
+                                if field.name == db_config.conformant_id_column {
+                                    continue;
+                                }
+                            }
+
                             let rust_type = match field.field_type.as_str() {
                                 "String" => "String",
                                 "Integer" => "i32",
@@ -194,6 +204,13 @@ pub fn generate_models(
 
                         // Convert each field
                         for field in &persistence.field_overrides {
+                            // Skip the conformant ID if it's auto-generated
+                            if db_config.autogenerate_conformant_id {
+                                if field.name == db_config.conformant_id_column {
+                                    continue;
+                                }
+                            }
+
                             match field.field_type.as_str() {
                                 "Float" => {
                                     // Convert f64 to BigDecimal
@@ -216,9 +233,17 @@ pub fn generate_models(
                                     }
                                 },
                                 _ => {
-                                    // String, Boolean, DateTime - direct clone
-                                    writeln!(output, "            {}: core.{}.clone(),",
-                                        field.name, field.name)?;
+                                    // String, Boolean, DateTime
+                                    if field.nullable {
+                                        // Database field is nullable - direct clone
+                                        writeln!(output, "            {}: core.{}.clone(),",
+                                            field.name, field.name)?;
+                                    } else {
+                                        // Database field is non-nullable - unwrap Option or clone
+                                        // Assume core field might be Option<String>, unwrap with default
+                                        writeln!(output, "            {}: core.{}.clone().unwrap_or_default(),",
+                                            field.name, field.name)?;
+                                    }
                                 }
                             }
                         }

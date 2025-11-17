@@ -65,8 +65,7 @@ pub fn generate_main_rs(
     writeln!(output, "mod models;")?;
     writeln!(output, "mod database;")?;
     writeln!(output, "mod error;")?;
-    writeln!(output, "mod transforms;")?;
-    writeln!(output, "mod hl7utils;\n")?;
+    writeln!(output, "mod transforms;\n")?;
 
     writeln!(output, "use database::{{create_pool, ensure_tables, DbConnection}};")?;
     writeln!(output, "use parsers::{{MessageParser, ParsedMessage}};")?;
@@ -214,7 +213,7 @@ pub fn generate_main_rs(
     writeln!(output, "            }};\n")?;
 
     writeln!(output, "            // Process message")?;
-    writeln!(output, "            match process_message(&msg.payload, &db_pool) {{")?;
+    writeln!(output, "            match process_message(&msg.payload, &db_pool, &jetstream).await {{")?;
     writeln!(output, "                Ok(_) => {{")?;
     writeln!(output, "                    // Acknowledge successful processing")?;
     writeln!(output, "                    if let Err(e) = msg.ack().await {{")?;
@@ -260,14 +259,16 @@ pub fn generate_main_rs(
     writeln!(output, "                                    // Update status to 'dlq'")?;
     writeln!(output, "                                    if let Ok(mut conn) = db_pool.get() {{")?;
     writeln!(output, "                                        diesel::sql_query(")?;
-    writeln!(output, "                                            r#\"UPDATE message_status")?;
-    writeln!(output, "                                               SET status = $1, error_message = $2")?;
-    writeln!(output, "                                               WHERE message_id = $3\"#")?;
+    writeln!(output, "                                            \"UPDATE message_status SET status = ?, error_message = ? WHERE message_id = ?\"")?;
     writeln!(output, "                                        )")?;
     writeln!(output, "                                        .bind::<Text, _>(\"dlq\")")?;
     writeln!(output, "                                        .bind::<Text, _>(&format!(\"Failed after {{}} attempts: {{:?}}\", delivery_count, e))")?;
-    writeln!(output, "                                        .bind::<UuidSqlType, _>(uuid_to_sql_value(&uuid))")?;
+    writeln!(output, "                                        .bind::<Text, _>(uuid.to_string())")?;
     writeln!(output, "                                        .execute(&mut conn)")?;
+    writeln!(output, "                                        .map_err(|e| {{")?;
+    writeln!(output, "                                            eprintln!(\"[WORKER] Failed to update message_status to dlq: {{:?}}\", e);")?;
+    writeln!(output, "                                            e")?;
+    writeln!(output, "                                        }})")?;
     writeln!(output, "                                        .ok();")?;
     writeln!(output, "                                    }}\n")?;
 
@@ -279,14 +280,16 @@ pub fn generate_main_rs(
     writeln!(output, "                                    // Still have retries left - update status and NAK")?;
     writeln!(output, "                                    if let Ok(mut conn) = db_pool.get() {{")?;
     writeln!(output, "                                        diesel::sql_query(")?;
-    writeln!(output, "                                            r#\"UPDATE message_status")?;
-    writeln!(output, "                                               SET status = $1, error_message = $2, retry_count = retry_count + 1")?;
-    writeln!(output, "                                               WHERE message_id = $3\"#")?;
+    writeln!(output, "                                            \"UPDATE message_status SET status = ?, error_message = ?, retry_count = retry_count + 1 WHERE message_id = ?\"")?;
     writeln!(output, "                                        )")?;
     writeln!(output, "                                        .bind::<Text, _>(\"failed\")")?;
     writeln!(output, "                                        .bind::<Text, _>(&format!(\"{{:?}}\", e))")?;
-    writeln!(output, "                                        .bind::<UuidSqlType, _>(uuid_to_sql_value(&uuid))")?;
+    writeln!(output, "                                        .bind::<Text, _>(uuid.to_string())")?;
     writeln!(output, "                                        .execute(&mut conn)")?;
+    writeln!(output, "                                        .map_err(|e| {{")?;
+    writeln!(output, "                                            eprintln!(\"[WORKER] Failed to update message_status retry: {{:?}}\", e);")?;
+    writeln!(output, "                                            e")?;
+    writeln!(output, "                                        }})")?;
     writeln!(output, "                                        .ok();")?;
     writeln!(output, "                                    }}\n")?;
 
@@ -308,9 +311,10 @@ pub fn generate_main_rs(
     writeln!(output, "}}\n")?;
 
     writeln!(output, "/// Process a single message")?;
-    writeln!(output, "fn process_message(")?;
+    writeln!(output, "async fn process_message(")?;
     writeln!(output, "    payload: &[u8],")?;
     writeln!(output, "    pool: &database::DbPool,")?;
+    writeln!(output, "    jetstream: &jetstream::Context,")?;
     writeln!(output, ") -> Result<(), AppError> {{")?;
     writeln!(output, "    eprintln!(\"[WORKER] Received message ({{}} bytes)\", payload.len());\n")?;
 
@@ -334,11 +338,15 @@ pub fn generate_main_rs(
 
     writeln!(output, "    // Update status to 'processing'")?;
     writeln!(output, "    diesel::sql_query(")?;
-    writeln!(output, "        r#\"UPDATE message_status SET status = $1 WHERE message_id = $2\"#")?;
+    writeln!(output, "        \"UPDATE message_status SET status = ? WHERE message_id = ?\"")?;
     writeln!(output, "    )")?;
     writeln!(output, "    .bind::<Text, _>(\"processing\")")?;
-    writeln!(output, "    .bind::<UuidSqlType, _>(uuid_to_sql_value(&message_id))")?;
+    writeln!(output, "    .bind::<Text, _>(message_id.to_string())")?;
     writeln!(output, "    .execute(&mut conn)")?;
+    writeln!(output, "    .map_err(|e| {{")?;
+    writeln!(output, "        eprintln!(\"[WORKER] Failed to update message_status to processing: {{:?}}\", e);")?;
+    writeln!(output, "        e")?;
+    writeln!(output, "    }})")?;
     writeln!(output, "    .ok(); // Ignore errors - status tracking is optional\n")?;
 
     writeln!(output, "    // Parse message body using entity-specific parsers")?;
@@ -358,6 +366,20 @@ pub fn generate_main_rs(
     writeln!(output, "            e")?;
     writeln!(output, "        }})?;")?;
     writeln!(output, "    eprintln!(\"[WORKER] Successfully parsed as entity: {{}}\", entity_name);\n")?;
+
+    writeln!(output, "    // Publish entity to its entity-specific NATS stream for testing/observability")?;
+    writeln!(output, "    let entity_stream_subject = format!(\"entities.{{}}\", entity_name);")?;
+    writeln!(output, "    let entity_json = serde_json::to_string(&raw_json)")?;
+    writeln!(output, "        .map_err(|e| {{")?;
+    writeln!(output, "            eprintln!(\"[WORKER] Failed to serialize entity for publishing: {{:?}}\", e);")?;
+    writeln!(output, "            AppError::ValidationError(format!(\"Entity serialization failed: {{}}\", e))")?;
+    writeln!(output, "        }})?;")?;
+    writeln!(output, "    jetstream.publish(entity_stream_subject.clone(), entity_json.clone().into()).await")?;
+    writeln!(output, "        .map_err(|e| {{")?;
+    writeln!(output, "            eprintln!(\"[WORKER] Failed to publish entity to stream {{}}: {{:?}}\", entity_stream_subject, e);")?;
+    writeln!(output, "            AppError::ValidationError(format!(\"Entity publishing failed: {{}}\", e))")?;
+    writeln!(output, "        }})?;")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Published {{}} entity to stream {{}}\", entity_name, entity_stream_subject);\n")?;
 
     writeln!(output, "    // Insert into database based on entity type")?;
     writeln!(output, "    match parsed {{")?;
@@ -407,16 +429,19 @@ pub fn generate_main_rs(
                 .map(|f| to_snake_case(&f.name))
                 .collect();
 
-            // Build placeholder list ($1, $2, ...)
-            let placeholders: Vec<String> = (1..=col_names.len())
-                .map(|i| format!("${}", i))
-                .collect();
-
             writeln!(output, "            eprintln!(\"[WORKER] Inserting {{}} into table {}\", entity_name);",
                 table_name)?;
 
-            // Build ON CONFLICT clause if unicity_fields are defined (use snake_case for SQL)
-            let on_conflict_clause = if !db_config.unicity_fields.is_empty() {
+            // Generate database-specific INSERT statements
+            writeln!(output, "            #[cfg(feature = \"postgres\")]")?;
+            writeln!(output, "            {{")?;
+
+            // PostgreSQL: Use $1, $2, ... placeholders and ON CONFLICT
+            let pg_placeholders: Vec<String> = (1..=col_names.len())
+                .map(|i| format!("${}", i))
+                .collect();
+
+            let pg_on_conflict = if !db_config.unicity_fields.is_empty() {
                 let snake_case_fields: Vec<String> = db_config.unicity_fields.iter()
                     .map(|f| to_snake_case(f))
                     .collect();
@@ -425,19 +450,47 @@ pub fn generate_main_rs(
                 String::new()
             };
 
-            writeln!(output, "            diesel::sql_query(")?;
-            writeln!(output, "                r#\"INSERT INTO {} ({}) VALUES ({}){}\"#",
+            writeln!(output, "                diesel::sql_query(")?;
+            writeln!(output, "                    r#\"INSERT INTO {} ({}) VALUES ({}){}\"#",
                 table_name,
                 col_names.join(", "),
-                placeholders.join(", "),
-                on_conflict_clause)?;
-            writeln!(output, "            )")?;
+                pg_placeholders.join(", "),
+                pg_on_conflict)?;
+            writeln!(output, "                )")?;
+
+            writeln!(output, "            }}")?;
+            writeln!(output, "            #[cfg(feature = \"mysql\")]")?;
+            writeln!(output, "            {{")?;
+
+            // MySQL: Use ? placeholders and INSERT IGNORE
+            let mysql_placeholders = vec!["?"; col_names.len()].join(", ");
+            let insert_keyword = if !db_config.unicity_fields.is_empty() {
+                "INSERT IGNORE"
+            } else {
+                "INSERT"
+            };
+
+            writeln!(output, "                diesel::sql_query(")?;
+            writeln!(output, "                    r#\"{} INTO {} ({}) VALUES ({})\"#",
+                insert_keyword,
+                table_name,
+                col_names.join(", "),
+                mysql_placeholders)?;
+            writeln!(output, "                )")?;
+
+            writeln!(output, "            }}")?;
 
             // Bind each field
+            // NOTE: We need to check the ENTITY field's nullable property (runtime type),
+            // not the field_override's nullable (which is a database constraint).
+            // If the entity field is nullable, the Rust type is Option<T> and we must use Nullable<DieselType>.
             for field in fields {
                 let field_type_str = field.field_type.as_deref().unwrap_or("String");
                 let diesel_type = map_to_diesel_type(field_type_str);
-                let is_nullable = field.nullable.unwrap_or(false);
+
+                // Look up the entity field definition to check if runtime type is Option<T>
+                let entity_field = entity.fields.iter().find(|f| f.name == field.name);
+                let is_nullable = entity_field.map(|f| f.nullable).unwrap_or(false);
 
                 if is_nullable {
                     writeln!(output, "            .bind::<Nullable<{}>, _>(&msg.{})", diesel_type, field.name)?;
@@ -459,7 +512,7 @@ pub fn generate_main_rs(
         if has_derived_entities {
             writeln!(output, "            // Process derived persistent entities")?;
             writeln!(output, "            eprintln!(\"[WORKER] Processing derived entities for {{}}\", entity_name);")?;
-            writeln!(output, "            process_{}_derived_entities(msg, &raw_json, &mut conn)",
+            writeln!(output, "            process_{}_derived_entities(msg, &raw_json, &mut conn, jetstream).await",
                 entity.name.to_lowercase())?;
             writeln!(output, "                .map_err(|e| {{")?;
             writeln!(output, "                    eprintln!(\"[WORKER] Error processing derived entities: {{:?}}\", e);")?;
@@ -474,15 +527,17 @@ pub fn generate_main_rs(
             writeln!(output, "            tracing::info!(\"Processed {{}} message (transient, derived entities persisted)\", entity_name);\n")?;
         }
 
-        writeln!(output, "            // Update status to 'completed'")?;
+        writeln!(output, "            // Update status to 'processed'")?;
         writeln!(output, "            diesel::sql_query(")?;
-        writeln!(output, "                r#\"UPDATE message_status")?;
-        writeln!(output, "                   SET status = $1, processed_at = NOW()")?;
-        writeln!(output, "                   WHERE message_id = $2\"#")?;
+        writeln!(output, "                \"UPDATE message_status SET status = ?, processed_at = NOW() WHERE message_id = ?\"")?;
         writeln!(output, "            )")?;
-        writeln!(output, "            .bind::<Text, _>(\"completed\")")?;
-        writeln!(output, "            .bind::<UuidSqlType, _>(uuid_to_sql_value(&message_id))")?;
+        writeln!(output, "            .bind::<Text, _>(\"processed\")")?;
+        writeln!(output, "            .bind::<Text, _>(message_id.to_string())")?;
         writeln!(output, "            .execute(&mut conn)")?;
+        writeln!(output, "            .map_err(|e| {{")?;
+        writeln!(output, "                eprintln!(\"[WORKER] Failed to update message_status to processed: {{:?}}\", e);")?;
+        writeln!(output, "                e")?;
+        writeln!(output, "            }})")?;
         writeln!(output, "            .ok(); // Ignore errors - status tracking is optional\n")?;
 
         writeln!(output, "            Ok(())")?;
@@ -517,6 +572,17 @@ fn generate_derived_entity_processors(
             })
             .collect();
 
+        // Find derived transient entities for this root (for NATS publishing)
+        let transient_entities: Vec<&EntityDef> = entities.iter()
+            .filter(|e| {
+                !e.is_persistent() &&
+                !e.is_root() &&
+                !e.is_abstract &&
+                e.source_type.to_lowercase() == "derived" &&
+                e.derives_from(&root_entity.name, entities)
+            })
+            .collect();
+
         // Only generate processor function if there are derived persistent entities
         if derived_entities.is_empty() {
             continue;
@@ -527,17 +593,19 @@ fn generate_derived_entity_processors(
         writeln!(output, "/// Process derived entities for {} ({} entities)",
             root_entity.name,
             derived_entities.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", "))?;
-        writeln!(output, "fn process_{}_derived_entities(",
+        writeln!(output, "async fn process_{}_derived_entities(",
             root_entity.name.to_lowercase())?;
         writeln!(output, "    {}: &parsers::{}Message,",
             root_entity.name.to_lowercase(), root_entity.name)?;
         writeln!(output, "    raw_json: &serde_json::Value,")?;
         writeln!(output, "    conn: &mut DbConnection,")?;
+        writeln!(output, "    jetstream: &jetstream::Context,")?;
         writeln!(output, ") -> Result<(), AppError> {{")?;
         writeln!(output, "    use transforms::*;")?;
         writeln!(output)?;
 
-        // Process each derived entity
+        // Process each derived persistent entity
+        // (this also publishes transient intermediate entities to NATS inline)
         for derived_entity in &derived_entities {
             generate_derived_entity_extraction(output, derived_entity, root_entity, entities)?;
         }
@@ -889,6 +957,11 @@ fn generate_derived_entity_extraction(
                 }
             }
 
+            // If this is a transient entity (no persistence), publish to NATS immediately
+            if !intermediate_entity.is_persistent() {
+                publish_transient_entity_to_nats(output, intermediate_entity, "    ")?;
+            }
+
             writeln!(output)?;
         }
     }
@@ -919,6 +992,11 @@ fn generate_derived_entity_extraction(
                         ));
                         generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_info, "        ")?;
                     }
+                }
+
+                // If this is a transient entity (no persistence), publish to NATS immediately
+                if !intermediate_entity.is_persistent() {
+                    publish_transient_entity_to_nats(output, intermediate_entity, "        ")?;
                 }
 
                 writeln!(output)?;
@@ -1001,20 +1079,8 @@ fn generate_derived_entity_extraction(
         .map(|f| to_snake_case(&f.name))
         .collect();
 
-    // Build placeholder list ($1, $2, ...)
-    let placeholders: Vec<String> = (1..=col_names.len())
-        .map(|i| format!("${}", i))
-        .collect();
-
-    // Build ON CONFLICT clause if unicity_fields are defined (use snake_case for SQL)
-    let on_conflict_clause = if !db_config.unicity_fields.is_empty() {
-        let snake_case_fields: Vec<String> = db_config.unicity_fields.iter()
-            .map(|f| to_snake_case(f))
-            .collect();
-        format!(" ON CONFLICT ({}) DO NOTHING", snake_case_fields.join(", "))
-    } else {
-        String::new()
-    };
+    // Database-specific SQL generation will be done inline below
+    // (placeholders and conflict handling vary by database)
 
     // Find string-type unicity fields to check for emptiness
     // Use field names directly (not prefixed with entity name)
@@ -1048,14 +1114,54 @@ fn generate_derived_entity_extraction(
         writeln!(output, "{}// Insert {} entity", base_indent, derived_entity.name)?;
     }
 
-    writeln!(output, "{}diesel::sql_query(", base_indent)?;
-    writeln!(output, "{}r#\"INSERT INTO {} ({}) VALUES ({}){}\"#",
-        query_indent,
+    // Generate database-specific INSERT statement
+    writeln!(output, "{}#[cfg(feature = \"postgres\")]", base_indent)?;
+    writeln!(output, "{}{{", base_indent)?;
+
+    // PostgreSQL: $1, $2, ... placeholders with ON CONFLICT
+    let pg_placeholders: Vec<String> = (1..=col_names.len())
+        .map(|i| format!("${}", i))
+        .collect();
+    let pg_on_conflict = if !db_config.unicity_fields.is_empty() {
+        let snake_case_fields: Vec<String> = db_config.unicity_fields.iter()
+            .map(|f| to_snake_case(f))
+            .collect();
+        format!(" ON CONFLICT ({}) DO NOTHING", snake_case_fields.join(", "))
+    } else {
+        String::new()
+    };
+
+    writeln!(output, "{}    diesel::sql_query(", base_indent)?;
+    writeln!(output, "{}        r#\"INSERT INTO {} ({}) VALUES ({}){}\"#",
+        base_indent,
         table_name,
         col_names.join(", "),
-        placeholders.join(", "),
-        on_conflict_clause)?;
-    writeln!(output, "{})", base_indent)?;
+        pg_placeholders.join(", "),
+        pg_on_conflict)?;
+    writeln!(output, "{}    )", base_indent)?;
+
+    writeln!(output, "{}}}", base_indent)?;
+    writeln!(output, "{}#[cfg(feature = \"mysql\")]", base_indent)?;
+    writeln!(output, "{}{{", base_indent)?;
+
+    // MySQL: ? placeholders with INSERT IGNORE
+    let mysql_placeholders = vec!["?"; col_names.len()].join(", ");
+    let insert_keyword = if !db_config.unicity_fields.is_empty() {
+        "INSERT IGNORE"
+    } else {
+        "INSERT"
+    };
+
+    writeln!(output, "{}    diesel::sql_query(", base_indent)?;
+    writeln!(output, "{}        r#\"{} INTO {} ({}) VALUES ({})\"#",
+        base_indent,
+        insert_keyword,
+        table_name,
+        col_names.join(", "),
+        mysql_placeholders)?;
+    writeln!(output, "{}    )", base_indent)?;
+
+    writeln!(output, "{}}}", base_indent)?;
 
     // Bind each field (skip autogenerated ID)
     for field in fields {
@@ -1068,7 +1174,11 @@ fn generate_derived_entity_extraction(
 
         let field_type_str = field.field_type.as_deref().unwrap_or("String");
         let diesel_type = map_to_diesel_type(field_type_str);
-        let is_nullable = field.nullable.unwrap_or(false);
+
+        // Look up the entity field definition to check if runtime type is Option<T>
+        // (Same logic as for root entities - check entity field's nullable, not field_override's nullable)
+        let entity_field = field_defs.get(&field.name);
+        let is_nullable = entity_field.map(|f| f.nullable).unwrap_or(false);
 
         if is_nullable {
             writeln!(output, "{}.bind::<Nullable<{}>, _>(&{})", base_indent, diesel_type, field.name)?;
@@ -1094,6 +1204,54 @@ fn generate_derived_entity_extraction(
     }
 
     writeln!(output)?;
+
+    Ok(())
+}
+
+/// Publish a transient entity to NATS (fields already extracted)
+fn publish_transient_entity_to_nats(
+    output: &mut std::fs::File,
+    entity: &EntityDef,
+    indent: &str,
+) -> Result<(), Box<dyn Error>> {
+    let entity_name = &entity.name;
+    let entity_prefix = crate::codegen::utils::to_snake_case(entity_name);
+
+    writeln!(output, "{}// Publish {} to NATS", indent, entity_name)?;
+    writeln!(output, "{}{{", indent)?;
+    writeln!(output, "{}    let mut entity_json = serde_json::Map::new();", indent)?;
+
+    // Add all fields to the JSON map
+    for field in &entity.fields {
+        let field_name = &field.name;
+        let var_name = format!("{}_{}", entity_prefix, field_name);
+        let field_type = &field.field_type;
+        let is_nullable = field.nullable;
+
+        // Handle different field types
+        if is_list_type(field_type) {
+            writeln!(output, "{}    if !{}.is_empty() {{", indent, var_name)?;
+            writeln!(output, "{}        entity_json.insert(\"{}\".to_string(), serde_json::json!(&{}));", indent, field_name, var_name)?;
+            writeln!(output, "{}    }}", indent)?;
+        } else if is_nullable {
+            writeln!(output, "{}    if let Some(ref val) = {} {{", indent, var_name)?;
+            writeln!(output, "{}        entity_json.insert(\"{}\".to_string(), serde_json::json!(val));", indent, field_name)?;
+            writeln!(output, "{}    }}", indent)?;
+        } else {
+            writeln!(output, "{}    entity_json.insert(\"{}\".to_string(), serde_json::json!(&{}));", indent, field_name, var_name)?;
+        }
+    }
+
+    writeln!(output, "{}    let entity_json_str = serde_json::to_string(&entity_json)", indent)?;
+    writeln!(output, "{}        .map_err(|e| AppError::ValidationError(format!(\"Failed to serialize {}: {{}}\", e)))?;", indent, entity_name)?;
+    writeln!(output, "{}    let stream_subject = format!(\"entities.{}\");", indent, entity_name)?;
+    writeln!(output, "{}    jetstream.publish(stream_subject.clone(), entity_json_str.into()).await", indent)?;
+    writeln!(output, "{}        .map_err(|e| {{", indent)?;
+    writeln!(output, "{}            eprintln!(\"[WORKER] Failed to publish {} to {{}}: {{:?}}\", stream_subject, e);", indent, entity_name)?;
+    writeln!(output, "{}            AppError::ValidationError(format!(\"NATS publish failed: {{}}\", e))", indent)?;
+    writeln!(output, "{}        }})?;", indent)?;
+    writeln!(output, "{}    eprintln!(\"[WORKER] ✓ Published {} to {{}}\", stream_subject);", indent, entity_name)?;
+    writeln!(output, "{}}}", indent)?;
 
     Ok(())
 }

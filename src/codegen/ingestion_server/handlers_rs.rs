@@ -154,15 +154,17 @@ fn generate_ingest_message_handler(
     writeln!(output, "    // Record message status in database")?;
     writeln!(output, "    let mut conn = state.db_pool.get()?;")?;
     writeln!(output, "    diesel::sql_query(")?;
-    writeln!(output, "        r#\"INSERT INTO message_status (message_id, entity_type, status, received_at)")?;
-    writeln!(output, "           VALUES ($1, $2, $3, $4)\"#")?;
+    writeln!(output, "        \"INSERT INTO message_status (message_id, entity_type, status, received_at) VALUES (?, ?, ?, ?)\"")?;
     writeln!(output, "    )")?;
-    writeln!(output, "    .bind::<UuidSqlType, _>(uuid_to_sql_value(&envelope.message_id))")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Text, _>(envelope.message_id.to_string())  // MySQL stores UUIDs as strings")?;
     writeln!(output, "    .bind::<diesel::sql_types::Text, _>(entity_type.as_deref().unwrap_or(\"unknown\"))")?;
     writeln!(output, "    .bind::<diesel::sql_types::Text, _>(\"accepted\")")?;
-    writeln!(output, "    .bind::<diesel::sql_types::Timestamp, _>(&envelope.received_at.naive_utc())")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Timestamp, _>(envelope.received_at.naive_utc())")?;
     writeln!(output, "    .execute(&mut conn)")?;
-    writeln!(output, "    .ok(); // Ignore errors - status tracking is optional\n")?;
+    writeln!(output, "    .map_err(|e| {{")?;
+    writeln!(output, "        eprintln!(\"[INGESTION-SERVER] Failed to insert message_status: {{:?}}\", e);")?;
+    writeln!(output, "        AppError::Database(e)")?;
+    writeln!(output, "    }})?;\n")?;
 
     writeln!(output, "    tracing::info!(\"Message {{}} queued for processing\", envelope.message_id);\n")?;
 
@@ -365,9 +367,9 @@ fn generate_status_check_handler(
 
     writeln!(output, "    let result: Option<MessageStatus> = diesel::sql_query(")?;
     writeln!(output, "        r#\"SELECT entity_type, status, received_at, processed_at, retry_count, error_message")?;
-    writeln!(output, "           FROM message_status WHERE message_id = $1\"#")?;
+    writeln!(output, "           FROM message_status WHERE message_id = ?\"#")?;
     writeln!(output, "    )")?;
-    writeln!(output, "    .bind::<UuidSqlType, _>(uuid_to_sql_value(&uuid))")?;
+    writeln!(output, "    .bind::<diesel::sql_types::Text, _>(uuid.to_string())")?;
     writeln!(output, "    .get_result(&mut conn)")?;
     writeln!(output, "    .optional()?;\n")?;
 

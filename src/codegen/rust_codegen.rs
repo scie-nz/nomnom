@@ -384,6 +384,16 @@ fn generate_derived_impl<W: Write>(
             }
         }
 
+        // Handle fields with extraction.copy_from_context - initialize to None
+        for field in &entity.fields {
+            if let Some(ref extraction) = field.extraction {
+                if extraction.copy_from_context {
+                    writeln!(writer, "        // Field '{}' copied from context at runtime", field.name)?;
+                    writeln!(writer, "        let {} = None;", field.name)?;
+                }
+            }
+        }
+
         // Build and return struct
         writeln!(writer)?;
         writeln!(writer, "        Ok(Self {{")?;
@@ -589,10 +599,10 @@ fn generate_field_extraction<W: Write>(
                 call_args.push(format!("&{}.{}", source_var, field_name));
             }
         } else {
-            // Direct source reference: pass the iterator variable directly
-            // For repeated_for patterns, the iterator variable (e.g., `item`) is already a reference
-            // (e.g., `&serde_json::Value` when iterating over `Vec<serde_json::Value>`)
-            call_args.push(source_var.clone());
+            // Direct source reference (from repeated_for pattern or self-reference)
+            // These are local variables that may be String but transforms often expect &Option<String>
+            // Always wrap in &Some(...) to convert String to &Option<String>
+            call_args.push(format!("&Some({}.clone())", source_var));
         }
     }
 
@@ -641,7 +651,9 @@ fn generate_field_extraction<W: Write>(
 
                     let binding_name = format!("{}_val", inner.replace("_", "_"));
                     optional_bindings.push((var_name.clone(), field_name.to_string(), binding_name.clone()));
-                    unwrapped_args.push(format!("{}", binding_name));
+                    // Wrap the unwrapped variable in &Some(...) to convert &String to &Option<String>
+                    // The variable is &String after unwrapping, but many transforms expect &Option<String>
+                    unwrapped_args.push(format!("&Some({}.clone())", binding_name));
                 }
             } else {
                 unwrapped_args.push(arg.clone());

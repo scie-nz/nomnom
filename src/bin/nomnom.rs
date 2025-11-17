@@ -49,8 +49,8 @@ enum Commands {
         config: PathBuf,
     },
 
-    /// Build complete project from nomnom.yaml (Phase 4: Zero build.rs)
-    BuildFromConfig {
+    /// Build parser binary with Python bindings (PyO3 + Diesel + generated entities)
+    BuildParserBinary {
         /// Path to nomnom.yaml configuration file
         #[arg(short, long, default_value = "nomnom.yaml")]
         config: PathBuf,
@@ -214,8 +214,8 @@ fn main() {
         Commands::Validate { config } => {
             validate_config(config)
         }
-        Commands::BuildFromConfig { config, output, release, test, database } => {
-            build_from_config(config, output, release, test, database)
+        Commands::BuildParserBinary { config, output, release, test, database } => {
+            build_parser_binary(config, output, release, test, database)
         }
         Commands::GenerateDashboard { entities, output, database, backend } => {
             generate_dashboard(entities, output, database, backend)
@@ -481,15 +481,15 @@ fn validate_config(config: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-/// Build complete project from nomnom.yaml (Phase 4: Zero build.rs)
-fn build_from_config(
+/// Build parser binary with Python bindings from nomnom.yaml
+fn build_parser_binary(
     config_file: PathBuf,
     output: Option<PathBuf>,
     release: bool,
     run_tests: bool,
     database_override: Option<String>,
 ) -> Result<(), String> {
-    println!("🔨 Building project from {}...", config_file.display());
+    println!("🔨 Building parser binary from {}...", config_file.display());
 
     // Load ProjectBuildConfig (extended YAML)
     let build_config = nomnom::codegen::ProjectBuildConfig::from_file(&config_file)?;
@@ -998,7 +998,7 @@ fn generate_worker(
         .find(|path| path.exists())
         .cloned();
 
-    let transforms = if let Some(nomnom_yaml_path) = nomnom_yaml {
+    let (transforms, dependencies) = if let Some(nomnom_yaml_path) = nomnom_yaml {
         println!("📋 Loading transforms from {}...", nomnom_yaml_path.display());
         match nomnom::codegen::project_config::BuildConfig::from_file(&nomnom_yaml_path) {
             Ok(config) => {
@@ -1006,17 +1006,32 @@ fn generate_worker(
                     .map(|t| t.rust.len())
                     .unwrap_or(0);
                 println!("  ✓ Loaded {} custom transforms", transform_count);
-                config.transforms.map(|t| t.rust)
+
+                // Extract dependencies for worker
+                let deps = config.dependencies
+                    .as_ref()
+                    .map(|deps_vec| {
+                        deps_vec.iter().map(|dep| {
+                            nomnom::codegen::worker::WorkerDependency {
+                                name: dep.name.clone(),
+                                path: dep.path.clone(),
+                                version: dep.version.clone(),
+                            }
+                        }).collect::<Vec<_>>()
+                    })
+                    .unwrap_or_else(Vec::new);
+
+                (config.transforms.map(|t| t.rust), deps)
             }
             Err(e) => {
                 println!("  ⚠ Warning: Failed to load nomnom.yaml: {}", e);
                 println!("  ℹ Continuing without custom transforms...");
-                None
+                (None, Vec::new())
             }
         }
     } else {
         println!("  ℹ No nomnom.yaml found, generating without custom transforms");
-        None
+        (None, Vec::new())
     };
 
     // Count persistent entities
@@ -1062,6 +1077,7 @@ fn generate_worker(
     let config = nomnom::codegen::worker::WorkerConfig {
         database_type: db_type,
         worker_name: worker_name.clone(),
+        additional_dependencies: dependencies,
     };
 
     // Generate worker
