@@ -311,6 +311,10 @@ pub struct RustTransformDef {
     /// Optional imports needed by this transform (e.g., ["regex::Regex", "sha1::{Digest, Sha1}"])
     #[serde(default)]
     pub imports: Vec<String>,
+
+    /// Optional test definitions for this transform
+    #[serde(default)]
+    pub tests: Vec<TransformTest>,
 }
 
 /// Transform function argument
@@ -322,6 +326,32 @@ pub struct TransformArg {
     /// Rust type (e.g., "&str", "usize", "Option<String>")
     #[serde(rename = "type")]
     pub arg_type: String,
+}
+
+/// Transform test definition
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TransformTest {
+    /// Test function name (must be valid Rust identifier)
+    pub name: String,
+
+    /// Human-readable test description
+    pub description: String,
+
+    /// Input values for the transform function
+    pub inputs: std::collections::HashMap<String, serde_yaml::Value>,
+
+    /// Expected result
+    pub expected: TestExpectation,
+}
+
+/// Test expectation (Ok or Err result)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum TestExpectation {
+    /// Success case with expected value
+    Ok { ok: serde_yaml::Value },
+    /// Error case with expected error message substring
+    Err { err: String },
 }
 
 /// Build helper configuration
