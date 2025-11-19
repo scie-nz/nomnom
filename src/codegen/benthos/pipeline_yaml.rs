@@ -44,7 +44,7 @@ pub fn generate_pipeline_yaml(
 input:
   nats_jetstream:
     urls:
-      - ${{NATS_URL:{}}}
+      - ${{NATS_URL}}
     subject: entities.{}
     durable: {}-mysql-consumer
     deliver: all
@@ -76,7 +76,7 @@ output:
     # Primary: Write to MySQL
     - sql_insert:
         driver: mysql
-        dsn: "${{MYSQL_USER}}:${{MYSQL_PASSWORD}}@tcp(${{MYSQL_HOST:{}}}:${{MYSQL_PORT:{}}}/${{MYSQL_DATABASE:{}}}?parseTime=true"
+        dsn: "${{MYSQL_USER}}:${{MYSQL_PASSWORD}}@tcp(${{MYSQL_HOST}}:${{MYSQL_PORT}}/${{MYSQL_DATABASE}}?parseTime=true"
         table: {}
         columns: [{}]
         args_mapping: |
@@ -92,7 +92,7 @@ output:
     # Fallback: Send to DLQ on error
     - nats_jetstream:
         urls:
-          - ${{NATS_URL:{}}}
+          - ${{NATS_URL}}
         subject: dlq.{}
         max_in_flight: 1
 
@@ -121,16 +121,11 @@ http:
   debug_endpoints: false
 "#,
         entity.name,
-        config.nats_url,
         entity_name_lower,
         entity_name_snake,
-        config.mysql_host,
-        config.mysql_port,
-        config.mysql_database,
         entity_name_snake,
         columns_str,
         args_mapping_str,
-        config.nats_url,
         entity_name_lower,
         entity_name_snake,
         entity_name_snake,
