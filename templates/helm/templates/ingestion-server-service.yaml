@@ -1,0 +1,23 @@
+{{- if .Values.ingestionServer.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hl7-nomnom-parser.fullname" . }}-ingestion-server
+  labels:
+    app.kubernetes.io/name: {{ include "hl7-nomnom-parser.name" . }}
+    app.kubernetes.io/component: ingestion-server
+    {{- include "hl7-nomnom-parser.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.ingestionServer.service.type }}
+  ports:
+  - port: {{ .Values.ingestionServer.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+    {{- if and (eq .Values.ingestionServer.service.type "NodePort") .Values.ingestionServer.service.nodePort }}
+    nodePort: {{ .Values.ingestionServer.service.nodePort }}
+    {{- end }}
+  selector:
+    app.kubernetes.io/name: {{ include "hl7-nomnom-parser.name" . }}
+    app.kubernetes.io/component: ingestion-server
+{{- end }}

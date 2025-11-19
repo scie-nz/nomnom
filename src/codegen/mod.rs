@@ -14,6 +14,8 @@ pub mod diesel;
 pub mod dashboard;
 pub mod ingestion_server;
 pub mod worker;
+pub mod benthos;
+pub mod helm;
 pub mod orchestration;
 pub mod transform_codegen;
 pub mod build_config;

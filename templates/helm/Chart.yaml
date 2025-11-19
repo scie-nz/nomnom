@@ -1,0 +1,20 @@
+apiVersion: v2
+name: hl7-nomnom-parser
+description: HL7 message ingestion and parsing system with NATS JetStream and MySQL
+type: application
+version: {{VERSION}}
+appVersion: "{{APP_VERSION}}"
+keywords:
+  - hl7
+  - healthcare
+  - ingestion
+  - parser
+  - nats
+  - mysql
+maintainers:
+  - name: HL7 Nomnom Parser Team
+dependencies:
+  - name: nats
+    version: "1.x.x"
+    repository: "https://nats-io.github.io/k8s/helm/charts/"
+    condition: nats.enabled

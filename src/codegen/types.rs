@@ -189,6 +189,15 @@ impl FieldSource {
     }
 }
 
+/// Condition specification for conditional field copying
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldCondition {
+    /// Field to check (from parent entity or self)
+    pub field: FieldSource,
+    /// Expected value to match
+    pub equals: String,
+}
+
 /// Computed field specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComputedFrom {
@@ -199,6 +208,9 @@ pub struct ComputedFrom {
     /// Additional arguments to pass to transform
     #[serde(default)]
     pub args: Option<serde_yaml::Value>,
+    /// Condition for conditional field copying (copy_field_conditional)
+    #[serde(default)]
+    pub condition: Option<FieldCondition>,
 }
 
 /// Field definition in entity YAML
@@ -822,6 +834,7 @@ impl FieldDefV1 {
                     } else {
                         Some(serde_yaml::Value::Sequence(source.args.clone()))
                     },
+                    condition: None,
                 });
             }
 

@@ -132,6 +132,68 @@ enum Commands {
         #[arg(short, long, default_value = "worker")]
         name: String,
     },
+
+    /// Generate Benthos pipelines for NATS to MySQL streaming
+    GenerateBenthos {
+        /// Path to entities directory
+        #[arg(short, long, default_value = "entities")]
+        entities: PathBuf,
+
+        /// Output directory for Benthos artifacts
+        #[arg(short, long, default_value = "benthos-pipelines")]
+        output: PathBuf,
+
+        /// Output format: standalone (default) or helm
+        #[arg(short, long, default_value = "standalone")]
+        format: String,
+
+        /// Path to Helm chart directory (required for --format helm)
+        #[arg(long)]
+        helm_chart_path: Option<PathBuf>,
+
+        /// Database type (postgresql, mysql, mariadb)
+        #[arg(short, long, default_value = "mysql")]
+        database: String,
+
+        /// NATS JetStream URL
+        #[arg(long, default_value = "nats://nats:4222")]
+        nats_url: String,
+
+        /// MySQL hostname
+        #[arg(long, default_value = "mysql")]
+        mysql_host: String,
+
+        /// MySQL port
+        #[arg(long, default_value = "3306")]
+        mysql_port: u16,
+
+        /// MySQL database name
+        #[arg(long, default_value = "warehouse")]
+        mysql_database: String,
+    },
+
+    /// Generate complete Helm chart from entity definitions
+    GenerateHelmChart {
+        /// Path to entities directory
+        #[arg(short, long, default_value = "config/entities")]
+        entities: PathBuf,
+
+        /// Output directory for Helm chart
+        #[arg(short, long, default_value = "helm-chart")]
+        output: PathBuf,
+
+        /// Chart version
+        #[arg(long, default_value = "0.2.0")]
+        chart_version: String,
+
+        /// App version
+        #[arg(long, default_value = "0.2.0")]
+        app_version: String,
+
+        /// Database backend (mysql or postgresql)
+        #[arg(short, long, default_value = "mysql")]
+        database: String,
+    },
 }
 
 /// Determine database type with precedence: CLI > ENV > config file > DATABASE_URL > default
@@ -225,6 +287,12 @@ fn main() {
         }
         Commands::GenerateWorker { entities, output, database, name } => {
             generate_worker(entities, output, database, name)
+        }
+        Commands::GenerateBenthos { entities, output, format, helm_chart_path, database, nats_url, mysql_host, mysql_port, mysql_database } => {
+            generate_benthos(entities, output, format, helm_chart_path, database, nats_url, mysql_host, mysql_port, mysql_database)
+        }
+        Commands::GenerateHelmChart { entities, output, chart_version, app_version, database } => {
+            generate_helm_chart(entities, output, chart_version, app_version, database)
         }
     };
 
@@ -1109,6 +1177,214 @@ fn generate_worker(
     println!("     - Parse and validate message bodies");
     println!("     - Write to database");
     println!("     - ACK/NAK messages");
+
+    Ok(())
+}
+
+/// Generate Benthos pipelines for NATS to MySQL streaming
+fn generate_benthos(
+    entities_dir: PathBuf,
+    output: PathBuf,
+    format: String,
+    helm_chart_path: Option<PathBuf>,
+    database_str: String,
+    nats_url: String,
+    mysql_host: String,
+    mysql_port: u16,
+    mysql_database: String,
+) -> Result<(), String> {
+    println!("🚀 Generating Benthos pipelines...\n");
+
+    // Validate format
+    let format_lower = format.to_lowercase();
+    if format_lower != "standalone" && format_lower != "helm" {
+        return Err(format!(
+            "Invalid format: '{}'. Supported formats: standalone, helm",
+            format
+        ));
+    }
+
+    // Validate Helm-specific requirements
+    if format_lower == "helm" {
+        if helm_chart_path.is_none() {
+            return Err("--helm-chart-path is required when using --format helm".to_string());
+        }
+        let chart_path = helm_chart_path.as_ref().unwrap();
+        if !chart_path.exists() {
+            return Err(format!("Helm chart path not found: {}", chart_path.display()));
+        }
+        if !chart_path.join("templates").exists() {
+            return Err(format!("Helm chart templates directory not found: {}/templates", chart_path.display()));
+        }
+    }
+
+    // Validate entities directory
+    if !entities_dir.exists() {
+        return Err(format!("Entities directory not found: {}", entities_dir.display()));
+    }
+
+    // Load entities
+    println!("📋 Loading entities from {}...", entities_dir.display());
+    let entities = nomnom::codegen::load_entities(&entities_dir)
+        .map_err(|e| format!("Failed to load entities: {}", e))?;
+
+    println!("  ✓ Loaded {} entities", entities.len());
+
+    // Parse database type
+    let db_type = match database_str.to_lowercase().as_str() {
+        "postgresql" | "postgres" | "pg" => nomnom::codegen::benthos::DatabaseType::PostgreSQL,
+        "mysql" => nomnom::codegen::benthos::DatabaseType::MySQL,
+        "mariadb" => nomnom::codegen::benthos::DatabaseType::MariaDB,
+        _ => {
+            return Err(format!(
+                "Unsupported database type: '{}'. Supported types: postgresql, mysql, mariadb",
+                database_str
+            ));
+        }
+    };
+
+    println!("🗄️  Database type: {}", db_type.as_str());
+    println!("📦 Output format: {}", format_lower);
+    println!();
+
+    // Create Benthos config
+    let config = nomnom::codegen::benthos::BenthosConfig {
+        database_type: db_type,
+        nats_url,
+        mysql_host,
+        mysql_port,
+        mysql_database,
+    };
+
+    if format_lower == "helm" {
+        generate_benthos_helm(&entities, &output, &config, helm_chart_path.unwrap())
+    } else {
+        // Generate standalone Benthos artifacts
+        nomnom::codegen::benthos::generate_all(
+            &entities,
+        &output,
+        &config,
+        ).map_err(|e| format!("Benthos generation failed: {}", e))?;
+
+        Ok(())
+    }
+}
+
+/// Generate Benthos Helm templates
+fn generate_benthos_helm(
+    entities: &[nomnom::codegen::EntityDef],
+    output_dir: &PathBuf,
+    config: &nomnom::codegen::benthos::BenthosConfig,
+    helm_chart_path: PathBuf,
+) -> Result<(), String> {
+    use std::fs;
+
+    println!("⎈ Generating Helm templates for Benthos pipelines...\n");
+
+    // Filter transient entities
+    let transient_entities: Vec<_> = entities.iter()
+        .filter(|e| {
+            e.source_type.to_lowercase() == "derived" && !e.is_abstract
+        })
+        .collect();
+
+    println!("  ✓ Found {} transient entities for Benthos pipelines", transient_entities.len());
+    println!();
+
+    // Create output directory structure
+    let helm_output_dir = output_dir.join("helm");
+    fs::create_dir_all(&helm_output_dir)
+        .map_err(|e| format!("Failed to create helm output directory: {}", e))?;
+
+    // Generate Helm templates
+    println!("📝 Generating Helm templates...");
+    let templates = nomnom::codegen::benthos::generate_helm_templates(&transient_entities, config)
+        .map_err(|e| format!("Failed to generate Helm templates: {}", e))?;
+
+    // Write templates to Helm chart directory
+    let templates_dir = helm_chart_path.join("templates");
+
+    let deployment_path = templates_dir.join("benthos-deployment.yaml");
+    fs::write(&deployment_path, templates.deployment)
+        .map_err(|e| format!("Failed to write deployment template: {}", e))?;
+    println!("  ✓ Generated {}", deployment_path.display());
+
+    let configmap_path = templates_dir.join("benthos-configmap.yaml");
+    fs::write(&configmap_path, templates.configmap)
+        .map_err(|e| format!("Failed to write configmap template: {}", e))?;
+    println!("  ✓ Generated {}", configmap_path.display());
+
+    let service_path = templates_dir.join("benthos-service.yaml");
+    fs::write(&service_path, templates.service)
+        .map_err(|e| format!("Failed to write service template: {}", e))?;
+    println!("  ✓ Generated {}", service_path.display());
+
+    let schema_job_path = templates_dir.join("schema-init-job.yaml");
+    fs::write(&schema_job_path, templates.schema_init_job)
+        .map_err(|e| format!("Failed to write schema init job template: {}", e))?;
+    println!("  ✓ Generated {}", schema_job_path.display());
+
+    println!();
+
+    // Write values file to output directory
+    println!("📝 Generating values file...");
+    let values_path = helm_output_dir.join("values-benthos.yaml");
+    fs::write(&values_path, templates.values)
+        .map_err(|e| format!("Failed to write values file: {}", e))?;
+    println!("  ✓ Generated {}", values_path.display());
+
+    println!();
+    println!("✨ Helm chart integration complete!");
+    println!("📁 Helm templates: {}", templates_dir.display());
+    println!("📁 Values file: {}", values_path.display());
+    println!();
+    println!("📖 Next steps:");
+    println!("  1. Review generated Helm templates in {}", templates_dir.display());
+    println!("  2. Update values.yaml with benthos: section (see values-benthos.yaml for defaults)");
+    println!("  3. Deploy with Helm:");
+    println!("     helm upgrade --install hl7-parser {} \\", helm_chart_path.display());
+    println!("       --set benthos.enabled=true \\");
+    println!("       -f {}", values_path.display());
+
+    Ok(())
+}
+
+/// Generate complete Helm chart from entity definitions
+fn generate_helm_chart(
+    entities_dir: PathBuf,
+    output_dir: PathBuf,
+    chart_version: String,
+    app_version: String,
+    database: String,
+) -> Result<(), String> {
+    println!("🔧 Generating Helm chart from entities...\n");
+
+    // Validate database type
+    let database_lower = database.to_lowercase();
+    if !matches!(database_lower.as_str(), "mysql" | "postgresql") {
+        return Err(format!(
+            "Invalid database type: '{}'. Supported types: mysql, postgresql",
+            database
+        ));
+    }
+
+    // Load entities
+    let entities = nomnom::codegen::load_entities(&entities_dir)
+        .map_err(|e| format!("Failed to load entities: {}", e))?;
+
+    println!("  ✓ Loaded {} entities from {}", entities.len(), entities_dir.display());
+
+    // Create Helm config
+    let config = nomnom::codegen::helm::HelmChartConfig {
+        chart_version,
+        app_version,
+        database_backend: database_lower,
+        nats_url: "nats://{{ .Release.Name }}-nats:4222".to_string(),
+    };
+
+    // Generate Helm chart
+    nomnom::codegen::helm::generate_helm_chart(&entities, &output_dir, &config)
+        .map_err(|e| format!("Helm chart generation failed: {}", e))?;
 
     Ok(())
 }

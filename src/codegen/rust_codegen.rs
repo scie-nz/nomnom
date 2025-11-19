@@ -521,6 +521,76 @@ fn generate_field_extraction<W: Write>(
 ) -> Result<(), std::io::Error> {
     writeln!(writer, "{}// Extract field: {}", indent, field.name)?;
 
+    // Special case: copy_field_conditional - conditional field copy based on another field's value
+    if computed.transform == "copy_field_conditional" {
+        if computed.sources.len() != 2 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("copy_field_conditional for '{}' requires exactly 2 sources (true_field, false_field)", field.name)
+            ));
+        }
+
+        let condition = computed.condition.as_ref().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("copy_field_conditional for '{}' requires a condition", field.name)
+            )
+        })?;
+
+        // Get the condition field source
+        let condition_var = match &condition.field {
+            crate::codegen::types::FieldSource::Parent { source, field, .. } => {
+                if source.to_lowercase() == "self" {
+                    // Self-reference: use local variable
+                    field.clone()
+                } else {
+                    // Parent field
+                    let var_name = to_snake_case(source);
+                    format!("{}.{}", var_name, field)
+                }
+            }
+            crate::codegen::types::FieldSource::Direct(name) => name.clone(),
+        };
+
+        // Get true and false field sources
+        let true_source = &computed.sources[0];
+        let false_source = &computed.sources[1];
+
+        let true_expr = match true_source {
+            crate::codegen::types::FieldSource::Parent { source, field, .. } => {
+                if source.to_lowercase() == "self" {
+                    format!("{}.clone()", field)
+                } else {
+                    let var_name = to_snake_case(source);
+                    format!("{}.{}.clone()", var_name, field)
+                }
+            }
+            crate::codegen::types::FieldSource::Direct(name) => format!("{}.clone()", name),
+        };
+
+        let false_expr = match false_source {
+            crate::codegen::types::FieldSource::Parent { source, field, .. } => {
+                if source.to_lowercase() == "self" {
+                    format!("{}.clone()", field)
+                } else {
+                    let var_name = to_snake_case(source);
+                    format!("{}.{}.clone()", var_name, field)
+                }
+            }
+            crate::codegen::types::FieldSource::Direct(name) => format!("{}.clone()", name),
+        };
+
+        // Generate conditional code
+        writeln!(writer, "{}let {} = if {}.as_deref() == Some(\"{}\") {{",
+            indent, field.name, condition_var, condition.equals)?;
+        writeln!(writer, "{}    {}", indent, true_expr)?;
+        writeln!(writer, "{}}} else {{", indent)?;
+        writeln!(writer, "{}    {}", indent, false_expr)?;
+        writeln!(writer, "{}}};", indent)?;
+
+        return Ok(());
+    }
+
     // Special case: copy_field transform with sources - direct field copy
     if computed.transform == "copy_field" && !computed.sources.is_empty() {
         let source = &computed.sources[0];
