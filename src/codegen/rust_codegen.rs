@@ -3,6 +3,15 @@
 //! This module generates Rust struct and impl code for entities based on
 //! YAML configurations. It provides generic scaffolding that domain-specific
 //! libraries can extend.
+//!
+//! ## Special Transforms Handled by Codegen
+//!
+//! Some transforms are recognized by the code generator and generate optimized
+//! inline code instead of function calls:
+//!
+//! - `copy_field`: Direct field copy (no function call)
+//! - `copy_field_conditional`: Conditional field selection based on condition
+//! - `coalesce`: First non-None value via .or_else() chain (zero overhead)
 
 use crate::codegen::types::{EntityDef, FieldDef, ComputedFrom};
 use crate::codegen::utils::to_snake_case;
@@ -627,6 +636,82 @@ fn generate_field_extraction<W: Write>(
         }
     }
 
+    // Special case: coalesce - generate direct .or_else() chain
+    // This is a compile-time transform that generates optimal code with no function call overhead
+    if computed.transform == "coalesce" {
+        if computed.sources.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("coalesce for '{}' requires at least 1 source", field.name)
+            ));
+        }
+
+        writeln!(writer, "{}// Coalesce: return first non-None value", indent)?;
+
+        // Handle single source (degenerate case - just clone)
+        if computed.sources.len() == 1 {
+            let source = &computed.sources[0];
+
+            // Get source expression
+            let source_expr = match source {
+                crate::codegen::types::FieldSource::Parent { source: src, field, .. } => {
+                    if src.to_lowercase() == "self" {
+                        // Self-reference: local variable
+                        field.clone()
+                    } else {
+                        // Parent entity field: entity.field
+                        let entity_var = to_snake_case(src);
+                        format!("{}.{}", entity_var, field)
+                    }
+                }
+                crate::codegen::types::FieldSource::Direct(name) => name.clone(),
+            };
+
+            writeln!(writer, "{}let {} = {}.clone();",
+                indent, field.name, source_expr)?;
+            return Ok(());
+        }
+
+        // Multiple sources: generate .or_else() chain
+        // Start with first source
+        let first_source = &computed.sources[0];
+        let first_expr = match first_source {
+            crate::codegen::types::FieldSource::Parent { source: src, field, .. } => {
+                if src.to_lowercase() == "self" {
+                    field.clone()
+                } else {
+                    let entity_var = to_snake_case(src);
+                    format!("{}.{}", entity_var, field)
+                }
+            }
+            crate::codegen::types::FieldSource::Direct(name) => name.clone(),
+        };
+
+        write!(writer, "{}let {} = {}.clone()", indent, field.name, first_expr)?;
+
+        // Chain remaining sources with .or_else()
+        for source in computed.sources.iter().skip(1) {
+            let source_expr = match source {
+                crate::codegen::types::FieldSource::Parent { source: src, field, .. } => {
+                    if src.to_lowercase() == "self" {
+                        field.clone()
+                    } else {
+                        let entity_var = to_snake_case(src);
+                        format!("{}.{}", entity_var, field)
+                    }
+                }
+                crate::codegen::types::FieldSource::Direct(name) => name.clone(),
+            };
+
+            write!(writer, "\n{}    .or_else(|| {}.clone())", indent, source_expr)?;
+        }
+
+        // Close the statement
+        writeln!(writer, ";")?;
+
+        return Ok(());
+    }
+
     // General case: call transform function directly
     // Build function call: transform_name(arg1, arg2, ...)
 
@@ -663,15 +748,19 @@ fn generate_field_extraction<W: Write>(
             if is_optional {
                 // Source field is Option<T> - we need to unwrap it
                 // Use a placeholder variable name that will be replaced by unwrap logic
-                call_args.push(format!("__OPT_{}_{}__", source_var, field_name));
+                // Use :: as delimiter to avoid conflicts with underscores in field names
+                call_args.push(format!("__OPT_{}::{}__", source_var, field_name));
             } else {
-                // Source field is not optional - pass as reference directly
-                call_args.push(format!("&{}.{}", source_var, field_name));
+                // Source field is not optional (String) - wrap in Some() for transforms expecting &Option<String>
+                call_args.push(format!("&Some({}.{}.clone())", source_var, field_name));
             }
         } else {
-            // Direct source reference (from repeated_for pattern or self-reference)
+            // Direct source reference (from repeated_for pattern)
             // These are local variables that may be String but transforms often expect &Option<String>
             // Always wrap in &Some(...) to convert String to &Option<String>
+            //
+            // NOTE: Parent sources with 'alias' field should NOT reach here - they should be handled
+            // above as they have a field_name. This is only for truly direct sources like repeated_for.each_known_as.
             call_args.push(format!("&Some({}.clone())", source_var));
         }
     }
@@ -710,20 +799,23 @@ fn generate_field_extraction<W: Write>(
 
         for arg in &call_args {
             if arg.starts_with("__OPT_") {
-                // Parse the placeholder: __OPT_{var}_{field}__
+                // Parse the placeholder: __OPT_{var}::{field}__
+                // Using :: as delimiter to avoid conflicts with underscores in variable/field names
                 let inner = arg.trim_start_matches("__OPT_").trim_end_matches("__");
-                let parts: Vec<&str> = inner.split('_').collect();
-                if parts.len() >= 2 {
-                    let last_idx = parts.len() - 1;
-                    let field_name = parts[last_idx];
-                    let var_parts = &parts[..last_idx];
-                    let var_name = var_parts.join("_");
+                let parts: Vec<&str> = inner.split("::").collect();
+                if parts.len() == 2 {
+                    let var_name = parts[0];
+                    let field_name = parts[1];
 
-                    let binding_name = format!("{}_val", inner.replace("_", "_"));
-                    optional_bindings.push((var_name.clone(), field_name.to_string(), binding_name.clone()));
+                    let binding_name = format!("{}_{}_val", var_name, field_name);
+                    optional_bindings.push((var_name.to_string(), field_name.to_string(), binding_name.clone()));
                     // Wrap the unwrapped variable in &Some(...) to convert &String to &Option<String>
                     // The variable is &String after unwrapping, but many transforms expect &Option<String>
                     unwrapped_args.push(format!("&Some({}.clone())", binding_name));
+                } else {
+                    // Fallback for malformed placeholders - should not happen
+                    eprintln!("Warning: Malformed optional placeholder: {}", arg);
+                    unwrapped_args.push(arg.clone());
                 }
             } else {
                 unwrapped_args.push(arg.clone());

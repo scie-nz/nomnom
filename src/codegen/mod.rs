@@ -23,6 +23,7 @@ pub mod project_config;
 pub mod fs_utils;
 pub mod parser_binary;
 pub mod lineage;
+pub mod dependency_graph;
 
 // Re-export key types
 pub use types::{EntityDef, FieldDef, ComputedFrom, SourceType, Repetition};

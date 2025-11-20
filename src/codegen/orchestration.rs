@@ -369,6 +369,7 @@ fn detect_permanent_entities(config_dir: &str) -> Result<Vec<EntityDef>, Box<dyn
                                 abstract_implementations: None,
                                 serialization: vec![],
                                 prefix: None,
+                                minimal_existence: None,
                             });
                         }
                     }
@@ -550,8 +551,9 @@ fn generate_python_bindings(module_name: &str, transform_functions: &[String]) -
     code.push_str("    m.add_class::<crate::python::PyDatabase>()?;\n\n");
 
     // Register persistence functions
-    code.push_str("    // Register get_or_create persistence functions\n");
-    code.push_str("    crate::python::register_persistence_functions(m)?;\n\n");
+    // DISABLED: Parser binary doesn't need persistence functions
+    // code.push_str("    // Register get_or_create persistence functions\n");
+    // code.push_str("    crate::python::register_persistence_functions(m)?;\n\n");
 
     // Register transform functions
     if !transform_functions.is_empty() {
@@ -665,9 +667,10 @@ fn generate_lib_rs_full(config: &GenerationConfig) -> String {
     code.push_str("        // Re-export nomnom's generic PyDatabase (requires python-bridge feature)\n");
     code.push_str("        pub use nomnom::diesel_runtime::PyDatabase;\n");
     code.push_str("    }\n\n");
-    code.push_str("    pub mod generated_persistence;\n\n");
+    // DISABLED: Parser binary doesn't need persistence module
+    // code.push_str("    pub mod generated_persistence;\n\n");
     code.push_str("    pub use database::PyDatabase;\n");
-    code.push_str("    pub use generated_persistence::*;\n");
+    // code.push_str("    pub use generated_persistence::*;\n");
     code.push_str("}\n\n");
 
     // Generated entities

@@ -112,6 +112,7 @@ fn copy_static_templates(template_base: &Path, templates_dir: &Path) -> Result<(
         "ingestion-server-deployment.yaml",
         "ingestion-server-service.yaml",
         "worker-deployment.yaml",
+        "nats-stream-init-job.yaml",
     ];
 
     let source_templates = template_base.join("templates");

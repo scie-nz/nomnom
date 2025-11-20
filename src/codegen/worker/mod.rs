@@ -17,6 +17,11 @@ mod models_rs;
 mod database_rs;
 mod error_rs;
 mod transforms_rs;
+mod message_processor_rs;
+mod entities_rs;
+mod extract_fn_rs;
+mod persist_publish_fn_rs;
+mod coordinator_fn_rs;
 
 pub use cargo_toml::generate_cargo_toml;
 pub use main_rs::generate_main_rs;
@@ -25,6 +30,11 @@ pub use models_rs::generate_models_rs;
 pub use database_rs::generate_database_rs;
 pub use error_rs::generate_error_rs;
 pub use transforms_rs::generate_transforms_rs;
+pub use message_processor_rs::generate_message_processor_rs;
+pub use entities_rs::generate_entities_file;
+pub use extract_fn_rs::generate_extract_functions_file;
+pub use persist_publish_fn_rs::generate_persist_publish_file;
+pub use coordinator_fn_rs::generate_coordinator_file;
 
 /// Database type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,8 +151,32 @@ pub fn generate_all(
     println!("  ✓ Generating main.rs...");
     generate_main_rs(entities, output_dir, config)?;
 
+    println!("  ✓ Generating message_processor.rs...");
+    generate_message_processor_rs(entities, output_dir)?;
+
     println!("  ✓ Generating parsers.rs...");
     generate_parsers_rs(entities, output_dir)?;
+
+    println!("  ✓ Generating entities.rs...");
+    generate_entities_file(entities, output_dir)?;
+
+    // Build dependency graph for new architecture
+    println!("  ✓ Building dependency graph...");
+    let dependency_graph = crate::codegen::dependency_graph::DependencyGraph::build(entities)?;
+    println!("    → {} levels, {} entities",
+        dependency_graph.num_levels(),
+        dependency_graph.nodes.len()
+    );
+
+    // Generate new dependency-based processing modules
+    println!("  ✓ Generating extract.rs (new architecture)...");
+    generate_extract_functions_file(entities, &dependency_graph, output_dir)?;
+
+    println!("  ✓ Generating persist_publish.rs (new architecture)...");
+    generate_persist_publish_file(entities, output_dir, config.database_type)?;
+
+    println!("  ✓ Generating coordinator.rs (new architecture)...");
+    generate_coordinator_file(entities, &dependency_graph, output_dir, config.database_type)?;
 
     println!("  ✓ Generating transforms.rs...");
     generate_transforms_rs(output_dir, transforms)?;

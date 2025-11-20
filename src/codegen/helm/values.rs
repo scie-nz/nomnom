@@ -114,9 +114,9 @@ mysql:
 
   auth:
     database: hl7_ingestion
-    username: nomnom
-    password: nomnom  # CHANGE IN PRODUCTION
-    rootPassword: root  # CHANGE IN PRODUCTION
+    username: root
+    password: root_test  # CHANGE IN PRODUCTION
+    rootPassword: root_test  # CHANGE IN PRODUCTION
 
   primary:
     persistence:
@@ -134,6 +134,11 @@ mysql:
 "#));
     }
 
+    // Calculate stream sizes (split total storage between streams)
+    let stream_storage = calculate_stream_storage(&nats_storage);
+    // Convert to NATS config format (19G instead of 19Gi)
+    let nats_storage_config = convert_to_nats_format(&nats_storage);
+
     // NATS section
     values.push_str(&format!(r#"
 # =============================================================================
@@ -142,12 +147,32 @@ mysql:
 nats:
   enabled: true
 
+  natsBox:
+    enabled: true
+
   config:
     jetstream:
       enabled: true
-      # Smart default based on {} transient entities
-      fileStore:
-        maxSize: {}
+    # Smart default: {} based on {} transient entities
+    merge:
+      jetstream:
+        max_file_store: {}
+        max_memory_store: 0
+        store_dir: /data
+
+  jetstream:
+    fileStore:
+      enabled: true
+      pvc:
+        enabled: true
+        size: {}
+
+  # Stream size configuration for nats-stream-init-job
+  streams:
+    messages:
+      maxBytes: {}
+    entities:
+      maxBytes: {}
 
   container:
     merge:
@@ -160,8 +185,12 @@ nats:
           cpu: "500m"
 
 "#,
-        transient_entities.len(),
         nats_storage,
+        transient_entities.len(),
+        nats_storage_config,
+        nats_storage,
+        stream_storage,
+        stream_storage,
     ));
 
     Ok(values)
@@ -193,12 +222,24 @@ benthos:
       cpu: "500m"
 
   warehouse:
-    host: "mysql-warehouse"
+    # Host should match your MySQL/MariaDB service name
+    # Common values:
+    #   - Bundled MySQL subchart: "{{ .Release.Name }}-mysql"
+    #   - Bundled MariaDB subchart: "{{ .Release.Name }}-mariadb"
+    #   - External database: "mysql.example.com"
+    host: "mysql"
     port: 3306
-    database: "warehouse"
-    username: "benthos"
-    # Create secret: kubectl create secret generic mysql-warehouse-credentials --from-literal=password=yourpassword
-    existingSecret: "mysql-warehouse-credentials"
+    # Database name where Benthos will write transient entities
+    database: "nomnom"
+    # MySQL user with write access to the database
+    username: "root"
+    # Reference to Kubernetes secret containing MySQL password
+    # The secret must have a 'password' key
+    # Common values:
+    #   - Bundled MySQL: "{{ .Release.Name }}-mysql"
+    #   - Custom secret: "my-mysql-credentials"
+    # Create secret: kubectl create secret generic mysql-credentials --from-literal=password=root_test
+    existingSecret: "mysql-credentials"
 
   nats:
     url: "nats://{{{{ .Release.Name }}}}-nats:4222"
@@ -287,5 +328,33 @@ fn calculate_nats_storage(transient_count: usize) -> String {
     } else {
         format!("{}Mi", total_mb)
     }
+}
+
+/// Calculate per-stream storage (40% of total for each stream, leaving headroom)
+fn calculate_stream_storage(total_storage: &str) -> String {
+    // Parse storage string (e.g., "10Gi" or "512Mi")
+    let total_mb = if total_storage.ends_with("Gi") {
+        let gb: usize = total_storage.trim_end_matches("Gi").parse().unwrap_or(1);
+        gb * 1024
+    } else if total_storage.ends_with("Mi") {
+        total_storage.trim_end_matches("Mi").parse().unwrap_or(512)
+    } else {
+        512 // default
+    };
+
+    // Allocate 40% to each stream (80% total, 20% headroom)
+    let stream_mb = (total_mb * 40) / 100;
+
+    if stream_mb >= 1024 {
+        format!("{}Gi", stream_mb / 1024)
+    } else {
+        format!("{}Mi", stream_mb)
+    }
+}
+
+/// Convert Kubernetes storage format (19Gi) to NATS config format (19G)
+fn convert_to_nats_format(k8s_storage: &str) -> String {
+    // NATS expects "19G" or "512M", not "19Gi" or "512Mi"
+    k8s_storage.replace("Gi", "G").replace("Mi", "M")
 }
 

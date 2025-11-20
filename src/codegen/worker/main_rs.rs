@@ -65,7 +65,11 @@ pub fn generate_main_rs(
     writeln!(output, "mod models;")?;
     writeln!(output, "mod database;")?;
     writeln!(output, "mod error;")?;
-    writeln!(output, "mod transforms;\n")?;
+    writeln!(output, "mod transforms;")?;
+    writeln!(output, "mod entities;")?;
+    writeln!(output, "mod extract;")?;
+    writeln!(output, "mod persist_publish;")?;
+    writeln!(output, "mod coordinator;\n")?;
 
     writeln!(output, "use database::{{create_pool, ensure_tables, DbConnection}};")?;
     writeln!(output, "use parsers::{{MessageParser, ParsedMessage}};")?;
@@ -104,10 +108,13 @@ pub fn generate_main_rs(
     writeln!(output, "#[tokio::main]")?;
     writeln!(output, "async fn main() {{")?;
     writeln!(output, "    // Initialize tracing")?;
-    writeln!(output, "    tracing_subscriber::fmt::init();\n")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Initializing worker...\");")?;
+    writeln!(output, "    tracing_subscriber::fmt::init();")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Tracing initialized\");\n")?;
 
     writeln!(output, "    // Load environment variables")?;
-    writeln!(output, "    dotenv::dotenv().ok();\n")?;
+    writeln!(output, "    dotenv::dotenv().ok();")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Environment loaded\");\n")?;
 
     writeln!(output, "    // Get NATS configuration")?;
     writeln!(output, "    let nats_url = std::env::var(\"NATS_URL\")")?;
@@ -132,55 +139,68 @@ pub fn generate_main_rs(
     writeln!(output, "        .unwrap_or(100);\n")?;
 
     writeln!(output, "    // Create database pool")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Creating database pool...\");")?;
     writeln!(output, "    let db_pool = create_pool()")?;
-    writeln!(output, "        .expect(\"Failed to create database pool\");\n")?;
+    writeln!(output, "        .expect(\"Failed to create database pool\");")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Database pool created\");\n")?;
 
     writeln!(output, "    // Ensure tables exist")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Ensuring database tables exist...\");")?;
     writeln!(output, "    {{")?;
     writeln!(output, "        let mut conn = db_pool.get()")?;
     writeln!(output, "            .expect(\"Failed to get database connection\");")?;
     writeln!(output, "        ensure_tables(&mut conn)")?;
     writeln!(output, "            .expect(\"Failed to ensure tables exist\");")?;
-    writeln!(output, "    }}\n")?;
+    writeln!(output, "    }}")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Database tables ready\");\n")?;
 
     writeln!(output, "    // Connect to NATS")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Connecting to NATS at {{}}...\", nats_url);")?;
     writeln!(output, "    let client = async_nats::connect(&nats_url).await")?;
     writeln!(output, "        .expect(\"Failed to connect to NATS\");")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Connected to NATS\");")?;
     writeln!(output, "    tracing::info!(\"Connected to NATS at {{}}\", nats_url);\n")?;
 
     writeln!(output, "    // Get JetStream context")?;
-    writeln!(output, "    let jetstream = jetstream::new(client);\n")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Creating JetStream context...\");")?;
+    writeln!(output, "    let jetstream = jetstream::new(client);")?;
+    writeln!(output, "    eprintln!(\"[WORKER] JetStream context created\");\n")?;
 
     writeln!(output, "    // Get or create stream")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Getting/creating stream '{{}}'...\", stream_name);")?;
     writeln!(output, "    let stream = jetstream")?;
     writeln!(output, "        .get_or_create_stream(jetstream::stream::Config {{")?;
     writeln!(output, "            name: stream_name.clone(),")?;
     writeln!(output, "            subjects: vec![\"messages.ingest.>\".to_string()],")?;
     writeln!(output, "            max_age: Duration::from_secs(24 * 60 * 60),")?;
-    writeln!(output, "            max_bytes: 1024 * 1024 * 1024,")?;
+    writeln!(output, "            max_bytes: 512 * 1024 * 1024,")?;
     writeln!(output, "            storage: jetstream::stream::StorageType::File,")?;
     writeln!(output, "            num_replicas: 1,")?;
     writeln!(output, "            ..Default::default()")?;
     writeln!(output, "        }})")?;
     writeln!(output, "        .await")?;
-    writeln!(output, "        .expect(\"Failed to get/create stream\");\n")?;
+    writeln!(output, "        .expect(\"Failed to get/create stream\");")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Stream '{{}}' ready\", stream_name);\n")?;
 
     writeln!(output, "    // Create ENTITIES stream for entity publishing")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Getting/creating ENTITIES stream...\");")?;
     writeln!(output, "    let _entities_stream = jetstream")?;
     writeln!(output, "        .get_or_create_stream(jetstream::stream::Config {{")?;
     writeln!(output, "            name: \"ENTITIES\".to_string(),")?;
     writeln!(output, "            subjects: vec![\"entities.*\".to_string()],")?;
     writeln!(output, "            max_age: Duration::from_secs(24 * 60 * 60),")?;
-    writeln!(output, "            max_bytes: 1024 * 1024 * 1024,")?;
+    writeln!(output, "            max_bytes: 512 * 1024 * 1024,")?;
     writeln!(output, "            storage: jetstream::stream::StorageType::File,")?;
     writeln!(output, "            num_replicas: 1,")?;
     writeln!(output, "            ..Default::default()")?;
     writeln!(output, "        }})")?;
     writeln!(output, "        .await")?;
     writeln!(output, "        .expect(\"Failed to get/create ENTITIES stream\");")?;
+    writeln!(output, "    eprintln!(\"[WORKER] ENTITIES stream ready\");")?;
     writeln!(output, "    tracing::info!(\"ENTITIES stream ready for entity publishing\");\n")?;
 
     writeln!(output, "    // Create or get consumer")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Getting/creating consumer '{{}}'...\", consumer_name);")?;
     writeln!(output, "    let consumer = stream")?;
     writeln!(output, "        .get_or_create_consumer(")?;
     writeln!(output, "            &consumer_name,")?;
@@ -193,8 +213,10 @@ pub fn generate_main_rs(
     writeln!(output, "            }}")?;
     writeln!(output, "        )")?;
     writeln!(output, "        .await")?;
-    writeln!(output, "        .expect(\"Failed to create consumer\");\n")?;
+    writeln!(output, "        .expect(\"Failed to create consumer\");")?;
+    writeln!(output, "    eprintln!(\"[WORKER] Consumer '{{}}' ready\", consumer_name);\n")?;
 
+    writeln!(output, "    eprintln!(\"[WORKER] ========== WORKER READY ==========\");")?;
     writeln!(output, "    tracing::info!(")?;
     writeln!(output, "        \"Worker ready - consuming from stream '{{}}' with consumer '{{}}'\",")?;
     writeln!(output, "        stream_name,")?;
@@ -206,10 +228,15 @@ pub fn generate_main_rs(
         .filter(|e| e.is_persistent(entities) && !e.is_abstract && e.source_type.to_lowercase() != "reference")
         .count();
     writeln!(output, "    tracing::info!(\"Processing messages for {} entities\");", entity_count)?;
+    writeln!(output, "    tracing::info!(\"Worker configuration: batch_size={{}}, poll_interval_ms={{}}, max_deliver={{}}\", batch_size, poll_interval_ms, max_deliver);")?;
     writeln!(output)?;
 
     writeln!(output, "    // Main message processing loop")?;
+    writeln!(output, "    let mut iteration = 0u64;")?;
     writeln!(output, "    loop {{")?;
+    writeln!(output, "        iteration += 1;")?;
+    writeln!(output, "        tracing::debug!(\"Loop iteration {{}}: Fetching batch of up to {{}} messages...\", iteration, batch_size);")?;
+    writeln!(output)?;
     writeln!(output, "        // Fetch batch of messages")?;
     writeln!(output, "        let mut messages = consumer")?;
     writeln!(output, "            .fetch()")?;
@@ -217,8 +244,11 @@ pub fn generate_main_rs(
     writeln!(output, "            .messages()")?;
     writeln!(output, "            .await")?;
     writeln!(output, "            .expect(\"Failed to fetch messages\");\n")?;
+    writeln!(output, "        let mut msg_count = 0;")?;
 
     writeln!(output, "        while let Some(msg) = messages.next().await {{")?;
+    writeln!(output, "            msg_count += 1;")?;
+    writeln!(output, "            tracing::info!(\"[Iteration {{}}] Processing message {{}} in batch\", iteration, msg_count);")?;
     writeln!(output, "            let msg = match msg {{")?;
     writeln!(output, "                Ok(m) => m,")?;
     writeln!(output, "                Err(e) => {{")?;
@@ -320,6 +350,12 @@ pub fn generate_main_rs(
     writeln!(output, "            }}")?;
     writeln!(output, "        }}")?;
     writeln!(output)?;
+    writeln!(output, "        if msg_count > 0 {{")?;
+    writeln!(output, "            tracing::info!(\"[Iteration {{}}] Processed {{}} messages in batch\", iteration, msg_count);")?;
+    writeln!(output, "        }} else {{")?;
+    writeln!(output, "            tracing::debug!(\"[Iteration {{}}] No messages in batch, sleeping for {{}}ms\", iteration, poll_interval_ms);")?;
+    writeln!(output, "        }}")?;
+    writeln!(output)?;
     writeln!(output, "        // Small delay between batches")?;
     writeln!(output, "        tokio::time::sleep(Duration::from_millis(poll_interval_ms)).await;")?;
     writeln!(output, "    }}")?;
@@ -331,6 +367,7 @@ pub fn generate_main_rs(
     writeln!(output, "    pool: &database::DbPool,")?;
     writeln!(output, "    jetstream: &jetstream::Context,")?;
     writeln!(output, ") -> Result<(), AppError> {{")?;
+    writeln!(output, "    tracing::info!(\"========== PROCESSING MESSAGE ==========\");")?;
     writeln!(output, "    eprintln!(\"[WORKER] Received message ({{}} bytes)\", payload.len());\n")?;
 
     writeln!(output, "    // Deserialize envelope")?;
@@ -396,250 +433,102 @@ pub fn generate_main_rs(
     writeln!(output, "        }})?;")?;
     writeln!(output, "    eprintln!(\"[WORKER] Published {{}} entity to stream {{}}\", entity_name, entity_stream_subject);\n")?;
 
-    writeln!(output, "    // Insert into database based on entity type")?;
+    writeln!(output, "    // Process message using dependency-based coordinator")?;
     writeln!(output, "    match parsed {{")?;
-
-    for entity in entities {
-        // Include root entities (persistent OR transient with derived persistent children)
-        if !entity.is_root() || entity.is_abstract {
-            continue;
-        }
-        if entity.source_type.to_lowercase() == "reference" {
-            continue;
-        }
-
-        // Check if this root entity has derived persistent entities
-        let derived_entities: Vec<&EntityDef> = entities.iter()
-            .filter(|e| {
-                e.is_persistent(entities) &&
-                !e.is_root() &&
-                !e.is_abstract &&
-                e.source_type.to_lowercase() == "derived" &&
-                e.derives_from(&entity.name, entities)
-            })
-            .collect();
-
-        let has_derived_entities = !derived_entities.is_empty();
-        let is_persistent = entity.is_persistent(entities);
-
-        // Include ALL root entities - both persistent and transient
-        // Transient entities will be published to NATS for observability
-        // Persistent entities will be written to database AND published to NATS
-
-        if has_derived_entities || is_persistent {
-            writeln!(output, "        ParsedMessage::{}(ref msg) => {{", entity.name)?;
-        } else {
-            writeln!(output, "        ParsedMessage::{}(msg) => {{", entity.name)?;
-        }
-
-        // Insert root entity if it's persistent
-        if let Some(ref persistence) = entity.persistence {
-            let fields = &persistence.field_overrides;
-            let db_config = entity.get_database_config(entities).unwrap();
-            let table_name = &db_config.conformant_table;
-
-            // Build column names list (use snake_case for SQL)
-            let col_names: Vec<String> = fields.iter()
-                .map(|f| to_snake_case(&f.name))
-                .collect();
-
-            writeln!(output, "            eprintln!(\"[WORKER] Inserting {{}} into table {}\", entity_name);",
-                table_name)?;
-
-            // Generate database-specific INSERT statements
-            writeln!(output, "            #[cfg(feature = \"postgres\")]")?;
-            writeln!(output, "            {{")?;
-
-            // PostgreSQL: Use $1, $2, ... placeholders and ON CONFLICT
-            let pg_placeholders: Vec<String> = (1..=col_names.len())
-                .map(|i| format!("${}", i))
-                .collect();
-
-            let pg_on_conflict = if !db_config.unicity_fields.is_empty() {
-                let snake_case_fields: Vec<String> = db_config.unicity_fields.iter()
-                    .map(|f| to_snake_case(f))
-                    .collect();
-                format!(" ON CONFLICT ({}) DO NOTHING", snake_case_fields.join(", "))
-            } else {
-                String::new()
-            };
-
-            writeln!(output, "                diesel::sql_query(")?;
-            writeln!(output, "                    r#\"INSERT INTO {} ({}) VALUES ({}){}\"#",
-                table_name,
-                col_names.join(", "),
-                pg_placeholders.join(", "),
-                pg_on_conflict)?;
-            writeln!(output, "                )")?;
-
-            writeln!(output, "            }}")?;
-            writeln!(output, "            #[cfg(feature = \"mysql\")]")?;
-            writeln!(output, "            {{")?;
-
-            // MySQL: Use ? placeholders and INSERT IGNORE
-            let mysql_placeholders = vec!["?"; col_names.len()].join(", ");
-            let insert_keyword = if !db_config.unicity_fields.is_empty() {
-                "INSERT IGNORE"
-            } else {
-                "INSERT"
-            };
-
-            writeln!(output, "                diesel::sql_query(")?;
-            writeln!(output, "                    r#\"{} INTO {} ({}) VALUES ({})\"#",
-                insert_keyword,
-                table_name,
-                col_names.join(", "),
-                mysql_placeholders)?;
-            writeln!(output, "                )")?;
-
-            writeln!(output, "            }}")?;
-
-            // Bind each field
-            // NOTE: We need to check the ENTITY field's nullable property (runtime type),
-            // not the field_override's nullable (which is a database constraint).
-            // If the entity field is nullable, the Rust type is Option<T> and we must use Nullable<DieselType>.
-            for field in fields {
-                let field_type_str = field.field_type.as_deref().unwrap_or("String");
-                let diesel_type = map_to_diesel_type(field_type_str);
-
-                // Look up the entity field definition to check if runtime type is Option<T>
-                let entity_field = entity.fields.iter().find(|f| f.name == field.name);
-                let is_nullable = entity_field.map(|f| f.nullable).unwrap_or(false);
-
-                if is_nullable {
-                    writeln!(output, "            .bind::<Nullable<{}>, _>(&msg.{})", diesel_type, field.name)?;
-                } else {
-                    writeln!(output, "            .bind::<{}, _>(&msg.{})", diesel_type, field.name)?;
-                }
-            }
-
-            writeln!(output, "            .execute(&mut conn)")?;
-            writeln!(output, "            .map_err(|e| {{")?;
-            writeln!(output, "                eprintln!(\"[WORKER] Database insertion error for {}: {{:?}}\", e);", table_name)?;
-            writeln!(output, "                e")?;
-            writeln!(output, "            }})?;")?;
-            writeln!(output, "            eprintln!(\"[WORKER] Successfully inserted into {}\");", table_name)?;
-            writeln!(output)?;
-        }
-
-        // If this root entity has derived persistent entities, process them
-        if has_derived_entities {
-            writeln!(output, "            // Process derived persistent entities")?;
-            writeln!(output, "            eprintln!(\"[WORKER] Processing derived entities for {{}}\", entity_name);")?;
-            writeln!(output, "            process_{}_derived_entities(msg, &raw_json, &mut conn, jetstream).await",
-                entity.name.to_lowercase())?;
-            writeln!(output, "                .map_err(|e| {{")?;
-            writeln!(output, "                    eprintln!(\"[WORKER] Error processing derived entities: {{:?}}\", e);")?;
-            writeln!(output, "                    e")?;
-            writeln!(output, "                }})?;")?;
-            writeln!(output)?;
-        }
-
-        if is_persistent {
-            writeln!(output, "            tracing::info!(\"Inserted {{}} message\", entity_name);\n")?;
-        } else {
-            writeln!(output, "            tracing::info!(\"Processed {{}} message (transient, derived entities persisted)\", entity_name);\n")?;
-        }
-
-        writeln!(output, "            // Update status to 'processed'")?;
-        writeln!(output, "            diesel::sql_query(")?;
-        writeln!(output, "                \"UPDATE message_status SET status = ?, processed_at = NOW() WHERE message_id = ?\"")?;
-        writeln!(output, "            )")?;
-        writeln!(output, "            .bind::<Text, _>(\"processed\")")?;
-        writeln!(output, "            .bind::<Text, _>(message_id.to_string())")?;
-        writeln!(output, "            .execute(&mut conn)")?;
-        writeln!(output, "            .map_err(|e| {{")?;
-        writeln!(output, "                eprintln!(\"[WORKER] Failed to update message_status to processed: {{:?}}\", e);")?;
-        writeln!(output, "                e")?;
-        writeln!(output, "            }})")?;
-        writeln!(output, "            .ok(); // Ignore errors - status tracking is optional\n")?;
-
-        writeln!(output, "            Ok(())")?;
-        writeln!(output, "        }}")?;
-    }
-
+    writeln!(output, "        ParsedMessage::Hl7v2MessageFile(ref msg) => {{")?;
+    writeln!(output, "            eprintln!(\"[WORKER] Processing message with coordinator...\");")?;
+    writeln!(output, "            coordinator::process_message(msg, &raw_json, &mut conn, jetstream).await?;")?;
+    writeln!(output, "            eprintln!(\"[WORKER] Successfully processed message\");")?;
+    writeln!(output)?;
+    writeln!(output, "            // Update status to 'processed'")?;
+    writeln!(output, "            diesel::sql_query(")?;
+    writeln!(output, "                \"UPDATE message_status SET status = ?, processed_at = NOW() WHERE message_id = ?\"")?;
+    writeln!(output, "            )")?;
+    writeln!(output, "            .bind::<Text, _>(\"processed\")")?;
+    writeln!(output, "            .bind::<Text, _>(message_id.to_string())")?;
+    writeln!(output, "            .execute(&mut conn)")?;
+    writeln!(output, "            .ok(); // Ignore errors - status tracking is optional")?;
+    writeln!(output)?;
+    writeln!(output, "            tracing::info!(\"========== MESSAGE PROCESSED SUCCESSFULLY ==========\");")?;
+    writeln!(output, "            Ok(())")?;
+    writeln!(output, "        }}")?;
     writeln!(output, "    }}")?;
     writeln!(output, "}}")?;
-
-    // Generate derived entity processors
-    generate_derived_entity_processors(&mut output, entities)?;
 
     Ok(())
 }
 
-/// Generate derived entity processor functions
-fn generate_derived_entity_processors(
+/// Generate derived entity processor functions (legacy - now in entity_processor_rs.rs)
+#[allow(dead_code)]
+pub(super) fn generate_derived_entity_processors_for_single_root(
     output: &mut std::fs::File,
-    entities: &[EntityDef],
+    root_entity: &EntityDef,
+    all_entities: &[EntityDef],
 ) -> Result<(), Box<dyn Error>> {
-    // Find all root entities (persistent OR transient)
-    for root_entity in entities.iter().filter(|e| e.is_root()) {
+    // Find derived persistent entities for this root
+    let derived_entities: Vec<&EntityDef> = all_entities.iter()
+        .filter(|e| {
+            e.is_persistent(all_entities) &&
+            !e.is_root() &&
+            !e.is_abstract &&
+            e.source_type.to_lowercase() == "derived" &&
+            e.derives_from(&root_entity.name, all_entities)
+        })
+        .collect();
 
-        // Find derived persistent entities for this root
-        let derived_entities: Vec<&EntityDef> = entities.iter()
-            .filter(|e| {
-                e.is_persistent(entities) &&
-                !e.is_root() &&
-                !e.is_abstract &&
-                e.source_type.to_lowercase() == "derived" &&
-                e.derives_from(&root_entity.name, entities)
-            })
-            .collect();
+    // Find derived transient entities for this root (for NATS publishing)
+    let transient_entities: Vec<&EntityDef> = all_entities.iter()
+        .filter(|e| {
+            !e.is_persistent(all_entities) &&
+            !e.is_root() &&
+            !e.is_abstract &&
+            e.source_type.to_lowercase() == "derived" &&
+            e.derives_from(&root_entity.name, all_entities)
+        })
+        .collect();
 
-        // Find derived transient entities for this root (for NATS publishing)
-        let transient_entities: Vec<&EntityDef> = entities.iter()
-            .filter(|e| {
-                !e.is_persistent(entities) &&
-                !e.is_root() &&
-                !e.is_abstract &&
-                e.source_type.to_lowercase() == "derived" &&
-                e.derives_from(&root_entity.name, entities)
-            })
-            .collect();
-
-        // Only generate processor function if there are derived entities (persistent OR transient)
-        if derived_entities.is_empty() && transient_entities.is_empty() {
-            continue;
-        }
-
-        // Generate processor function for this root entity
-        writeln!(output)?;
-        writeln!(output, "/// Process derived entities for {} ({} entities)",
-            root_entity.name,
-            derived_entities.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", "))?;
-        writeln!(output, "async fn process_{}_derived_entities(",
-            root_entity.name.to_lowercase())?;
-        writeln!(output, "    {}: &parsers::{}Message,",
-            root_entity.name.to_lowercase(), root_entity.name)?;
-        writeln!(output, "    raw_json: &serde_json::Value,")?;
-        writeln!(output, "    conn: &mut DbConnection,")?;
-        writeln!(output, "    jetstream: &jetstream::Context,")?;
-        writeln!(output, ") -> Result<(), AppError> {{")?;
-        writeln!(output, "    use transforms::*;")?;
-        writeln!(output)?;
-
-        // Process each derived transient entity FIRST (publish to NATS only, no database)
-        // These must be extracted before persistent entities that depend on them
-        for transient_entity in &transient_entities {
-            generate_transient_derived_entity_extraction(output, transient_entity, root_entity, entities)?;
-        }
-
-        // Process each derived persistent entity
-        // (this also publishes transient intermediate entities to NATS inline)
-        for derived_entity in &derived_entities {
-            generate_derived_entity_extraction(output, derived_entity, root_entity, entities)?;
-        }
-
-        writeln!(output, "    tracing::info!(\"Processed derived entities for {}\");\n", root_entity.name)?;
-        writeln!(output, "    Ok(())")?;
-        writeln!(output, "}}")?;
+    // Only generate processor function if there are derived entities (persistent OR transient)
+    if derived_entities.is_empty() && transient_entities.is_empty() {
+        return Ok(());
     }
+
+    // Generate processor function for this root entity
+    writeln!(output)?;
+    writeln!(output, "/// Process derived entities for {} ({} entities)",
+        root_entity.name,
+        derived_entities.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", "))?;
+    writeln!(output, "pub async fn process_derived_entities(",)?;
+    writeln!(output, "    {}: &parsers::{}Message,",
+        root_entity.name.to_lowercase(), root_entity.name)?;
+    writeln!(output, "    raw_json: &serde_json::Value,")?;
+    writeln!(output, "    conn: &mut DbConnection,")?;
+    writeln!(output, "    jetstream: &jetstream::Context,")?;
+    writeln!(output, ") -> Result<(), AppError> {{")?;
+    writeln!(output, "    use crate::transforms::*;")?;
+    writeln!(output)?;
+
+    // Process each derived transient entity FIRST (publish to NATS only, no database)
+    // These must be extracted before persistent entities that depend on them
+    for transient_entity in &transient_entities {
+        generate_transient_derived_entity_extraction(output, transient_entity, root_entity, all_entities)?;
+    }
+
+    // Process each derived persistent entity
+    // (this also publishes transient intermediate entities to NATS inline)
+    for derived_entity in &derived_entities {
+        generate_derived_entity_extraction(output, derived_entity, root_entity, all_entities)?;
+    }
+
+    writeln!(output, "    tracing::info!(\"Processed derived entities for {}\");", root_entity.name)?;
+    writeln!(output, "    Ok(())")?;
+    writeln!(output, "}}")?;
 
     Ok(())
 }
 
 /// Recursively collect entity dependencies in topological order (dependencies first)
-fn collect_entity_dependencies(
+#[allow(dead_code)]
+pub(super) fn collect_entity_dependencies(
     entity_name: &str,
     all_entities: &[EntityDef],
     root_entity: &EntityDef,
@@ -719,7 +608,8 @@ fn collect_entity_dependencies(
 }
 
 /// Validate that at most one parent entity has repetition=repeated
-fn validate_parent_repetition(
+#[allow(dead_code)]
+pub(super) fn validate_parent_repetition(
     derived_entity: &EntityDef,
     all_entities: &[EntityDef],
 ) -> Result<(), String> {
@@ -764,11 +654,24 @@ fn validate_parent_repetition(
 }
 
 /// Generate extraction and persistence logic for a single derived entity
-fn generate_derived_entity_extraction(
+#[allow(dead_code)]
+pub(super) fn generate_derived_entity_extraction(
     output: &mut std::fs::File,
     derived_entity: &EntityDef,
     root_entity: &EntityDef,
     all_entities: &[EntityDef],
+) -> Result<(), Box<dyn Error>> {
+    generate_derived_entity_extraction_internal(output, derived_entity, root_entity, all_entities, None)
+}
+
+/// Internal implementation with optional repeating context override
+#[allow(dead_code)]
+pub(super) fn generate_derived_entity_extraction_internal(
+    output: &mut std::fs::File,
+    derived_entity: &EntityDef,
+    root_entity: &EntityDef,
+    all_entities: &[EntityDef],
+    repeating_context_override: Option<(&str, &str, &str)>, // (entity_name, segment_var, each_known_as)
 ) -> Result<(), Box<dyn Error>> {
     use std::collections::{HashMap, HashSet};
 
@@ -840,6 +743,27 @@ fn generate_derived_entity_extraction(
                         segments_source_entity = Some(repeated_for.entity.clone());
                     }
                     break;
+                }
+            }
+        }
+
+        // Also check derivation.source_entities for repeated entities with repeated_for
+        if repeating_parent_name.is_none() {
+            if let Some(ref derivation) = derived_entity.derivation {
+                if let Some(ref source_entities) = derivation.source_entities {
+                    // Check each source entity for repeated_for
+                    for (_key, value) in source_entities.as_mapping().unwrap() {
+                        if let serde_yaml::Value::String(source_entity_name) = value {
+                            if let Some(source_entity) = entities_by_name.get(source_entity_name.as_str()) {
+                                if let Some(ref repeated_for) = source_entity.repeated_for {
+                                    repeating_parent_name = Some(source_entity_name.clone());
+                                    repeating_field_name = Some(repeated_for.field.clone());
+                                    segments_source_entity = Some(repeated_for.entity.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1003,7 +927,7 @@ fn generate_derived_entity_extraction(
                     let field_type_str = field.field_type.as_str();
                     let is_nullable = field.nullable;
                     // Non-repeating intermediate entities are not from repeating parents, so pass None
-                    generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, None, "    ")?;
+                    generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, None, "    ", Some(intermediate_entity), true)?;
                 }
             }
 
@@ -1017,7 +941,8 @@ fn generate_derived_entity_extraction(
     }
 
     // Open the loop if we have a repeating parent
-    if has_repeating_parent {
+    // BUT: skip loop creation if we have a repeating_context_override (already in a loop from parent)
+    if has_repeating_parent && repeating_context_override.is_none() {
         writeln!(output, "")?;
         writeln!(output, "    // Loop over each {} segment and insert {} records",
             repeating_field_name.as_ref().unwrap(), derived_entity.name)?;
@@ -1040,7 +965,7 @@ fn generate_derived_entity_extraction(
                             each_known_as.as_str(),
                             each_known_as.as_str(),
                         ));
-                        generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_info, "        ")?;
+                        generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_info, "        ", Some(intermediate_entity), true)?;
                     }
                 }
 
@@ -1065,7 +990,10 @@ fn generate_derived_entity_extraction(
     };
 
     // Prepare repeating parent info for field extraction
-    let repeating_parent_info = if has_repeating_parent {
+    let repeating_parent_info = if let Some(override_ctx) = repeating_context_override {
+        // Use the provided override context (e.g., from repeated entity processor)
+        Some(override_ctx)
+    } else if has_repeating_parent {
         Some((
             repeating_parent_name.as_ref().unwrap().as_str(),
             each_known_as.as_str(),
@@ -1076,7 +1004,8 @@ fn generate_derived_entity_extraction(
     };
 
     // Determine the base indent based on whether we're in a loop
-    let base_indent = if has_repeating_parent { "        " } else { "    " };
+    // When we have a repeating_context_override, we're not creating our own loop, so keep indent at "    "
+    let base_indent = if has_repeating_parent && repeating_context_override.is_none() { "        " } else { "    " };
 
     // Generate field extraction for each field in derived entity (skip autogenerated ID unless it has computed_from)
     for field in fields {
@@ -1100,7 +1029,7 @@ fn generate_derived_entity_extraction(
             if let Some(ref computed_from) = field_def.computed_from {
                 // Generate extraction code based on computed_from configuration
                 let field_type_str = field_def.field_type.as_str();
-                generate_field_extraction(output, field_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_parent_info, base_indent)?;
+                generate_field_extraction(output, field_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_parent_info, base_indent, Some(derived_entity), false)?;
                 continue;
             }
         }
@@ -1259,11 +1188,24 @@ fn generate_derived_entity_extraction(
 }
 
 /// Generate extraction and NATS publishing logic for a transient derived entity
-fn generate_transient_derived_entity_extraction(
+#[allow(dead_code)]
+pub(super) fn generate_transient_derived_entity_extraction(
     output: &mut std::fs::File,
     derived_entity: &EntityDef,
     root_entity: &EntityDef,
     all_entities: &[EntityDef],
+) -> Result<(), Box<dyn Error>> {
+    generate_transient_derived_entity_extraction_internal(output, derived_entity, root_entity, all_entities, None)
+}
+
+/// Internal implementation with optional repeating context
+#[allow(dead_code)]
+pub(super) fn generate_transient_derived_entity_extraction_internal(
+    output: &mut std::fs::File,
+    derived_entity: &EntityDef,
+    root_entity: &EntityDef,
+    all_entities: &[EntityDef],
+    repeating_context: Option<(&str, &str, &str)>, // (entity_name, segment_var, each_known_as)
 ) -> Result<(), Box<dyn Error>> {
     use std::collections::{HashMap, HashSet};
 
@@ -1333,7 +1275,7 @@ fn generate_transient_derived_entity_extraction(
                     let var_name = format!("{}_{}", crate::codegen::utils::to_snake_case(entity_name), field.name);
                     let field_type_str = field.field_type.as_str();
                     let is_nullable = field.nullable;
-                    generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, None, "    ")?;
+                    generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_context, "    ", Some(intermediate_entity), true)?;
                 }
             }
             if !intermediate_entity.is_persistent(all_entities) {
@@ -1349,7 +1291,7 @@ fn generate_transient_derived_entity_extraction(
             let var_name = format!("{}_{}", entity_prefix, field.name);
             let field_type_str = field.field_type.as_str();
             let is_nullable = field.nullable;
-            generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, None, "    ")?;
+            generate_field_extraction(output, &var_name, field_type_str, computed_from, root_entity, &root_param_name, is_nullable, repeating_context, "    ", Some(derived_entity), false)?;
         }
     }
 
@@ -1362,7 +1304,8 @@ fn generate_transient_derived_entity_extraction(
 }
 
 /// Publish a transient entity to NATS (fields already extracted)
-fn publish_transient_entity_to_nats(
+#[allow(dead_code)]
+pub(super) fn publish_transient_entity_to_nats(
     output: &mut std::fs::File,
     entity: &EntityDef,
     indent: &str,
@@ -1415,14 +1358,16 @@ fn publish_transient_entity_to_nats(
 }
 
 /// Check if a field type is a list/vector type
-fn is_list_type(field_type: &str) -> bool {
+#[allow(dead_code)]
+pub(super) fn is_list_type(field_type: &str) -> bool {
     field_type.starts_with("list[") || field_type.starts_with("List[") || field_type.starts_with("Vec<")
 }
 
 /// Determine the main data field for a root entity
 /// For Hl7v2MessageFile, this is "hl7v2Message"
 /// For Filename, this is "fileName"
-fn determine_root_data_field(entity: &EntityDef) -> &str {
+#[allow(dead_code)]
+pub(super) fn determine_root_data_field(entity: &EntityDef) -> &str {
     // Strategy: Prioritize fields with common data payload names, then fall back to first non-nullable string
     let priority_names = ["message", "hl7v2Message", "body", "data", "content", "text"];
 
@@ -1446,8 +1391,67 @@ fn determine_root_data_field(entity: &EntityDef) -> &str {
         .unwrap_or("body") // final fallback
 }
 
+/// Helper function to build variable name for a field source
+fn build_source_variable_name(
+    source: &crate::codegen::types::FieldSource,
+    repeating_parent_info: Option<(&str, &str, &str)>,
+    current_entity: Option<&EntityDef>,
+    is_intermediate: bool, // true if generating for a dependency entity, false if main entity
+) -> String {
+    use crate::codegen::utils::to_snake_case;
+
+    let src_entity = source.source_name();
+    let src_field = source.field_name();
+
+    if let Some(field) = src_field {
+        // Handle "self" as source entity (references current entity's fields)
+        if src_entity == "self" {
+            if is_intermediate {
+                // Dependency entity: use entity-prefixed name
+                if let Some(current_ent) = current_entity {
+                    format!("{}_{}", to_snake_case(&current_ent.name), field)
+                } else {
+                    field.to_string()
+                }
+            } else {
+                // Main entity processor: use bare field name
+                field.to_string()
+            }
+        } else {
+            format!("{}_{}", to_snake_case(src_entity), field)
+        }
+    } else {
+        // Direct source - check context
+        if let Some((_parent_name, segment_var, each_known_as)) = repeating_parent_info {
+            if src_entity == each_known_as {
+                // Use the actual variable name (segment_var) not the logical name (each_known_as)
+                segment_var.to_string()
+            } else if let Some(current_ent) = current_entity {
+                if current_ent.fields.iter().any(|f| f.name == src_entity) {
+                    let current_entity_prefix = to_snake_case(&current_ent.name);
+                    format!("{}_{}", current_entity_prefix, src_entity)
+                } else {
+                    to_snake_case(src_entity)
+                }
+            } else {
+                to_snake_case(src_entity)
+            }
+        } else if let Some(current_ent) = current_entity {
+            if current_ent.fields.iter().any(|f| f.name == src_entity) {
+                let current_entity_prefix = to_snake_case(&current_ent.name);
+                format!("{}_{}", current_entity_prefix, src_entity)
+            } else {
+                to_snake_case(src_entity)
+            }
+        } else {
+            to_snake_case(src_entity)
+        }
+    }
+}
+
 /// Generate field extraction code based on computed_from configuration
-fn generate_field_extraction(
+#[allow(dead_code)]
+pub(super) fn generate_field_extraction(
     output: &mut std::fs::File,
     field_name: &str,
     field_type: &str,
@@ -1457,6 +1461,8 @@ fn generate_field_extraction(
     is_nullable: bool,
     repeating_parent_info: Option<(&str, &str, &str)>, // (parent_name, segment_var, each_known_as)
     base_indent: &str,
+    current_entity: Option<&EntityDef>, // Entity being generated (for resolving self-references)
+    is_intermediate: bool, // true if generating for a dependency entity, false if main entity
 ) -> Result<(), Box<dyn Error>> {
     let transform = &computed_from.transform;
     let sources = &computed_from.sources;
@@ -1469,7 +1475,18 @@ fn generate_field_extraction(
 
     // Check if sources is empty
     if sources.is_empty() {
-        // No sources defined - generate placeholder
+        // Check for constant_value transform
+        if transform == "constant_value" {
+            if let Some(ref args) = computed_from.args {
+                if let Some(value) = args.get("value").and_then(|v| v.as_str()) {
+                    writeln!(output, "{}let {}: Option<String> = Some(\"{}\".to_string());",
+                        base_indent, field_name, value)?;
+                    return Ok(());
+                }
+            }
+        }
+
+        // No sources defined and not a constant_value - generate placeholder
         if is_list_type(field_type) {
             writeln!(output, "{}let {}: Vec<String> = vec![]; // TODO: No sources defined for transform '{}'",
                 base_indent,
@@ -1495,19 +1512,16 @@ fn generate_field_extraction(
 
         if source_entity == root_entity.name.as_str() {
             // Direct access from root message
-            writeln!(output, "{}let {} = {}{}.{}.clone();",
+            // Always wrap in Some() for intermediate entities since transforms expect Option types
+            writeln!(output, "{}let {}: Option<String> = Some({}.{}.clone());",
                 base_indent,
                 field_name,
-                if is_nullable { "Some(" } else { "" },
                 root_param_name,
                 src_field)?;
-            if is_nullable {
-                writeln!(output, "{}// Close Some()", base_indent)?;
-            }
         } else {
             // Access from intermediate entity variable
             let intermediate_var = format!("{}_{}", crate::codegen::utils::to_snake_case(source_entity), src_field);
-            writeln!(output, "{}let {} = {}.clone();",
+            writeln!(output, "{}let {}: Option<String> = {}.clone();",
                 base_indent,
                 field_name,
                 intermediate_var)?;
@@ -1581,17 +1595,28 @@ fn generate_field_extraction(
             if let Some((_repeating_parent, segment_var, each_known_as)) = repeating_parent_info {
                 if source_entity == each_known_as {
                     // Generate transform call with segment as first argument
-                    // Note: segment_var is a String from Vec<String>, so we pass it as &str
                     let args_list = if let Some(ref args) = computed_from.args {
                         format_transform_args_list(args)
                     } else {
                         vec![]
                     };
 
-                    let all_args = if args_list.is_empty() {
-                        format!("{}.as_str()", segment_var)
+                    // Check if segment_var is "segment_opt" (from repeated entity processor)
+                    // or a regular loop variable
+                    let all_args = if segment_var == "segment_opt" {
+                        // segment_opt is already Option<String>, pass as &segment_opt
+                        if args_list.is_empty() {
+                            format!("&{}", segment_var)
+                        } else {
+                            format!("&{}, {}", segment_var, args_list.join(", "))
+                        }
                     } else {
-                        format!("{}.as_str(), {}", segment_var, args_list.join(", "))
+                        // Regular loop variable is a String, convert to &str
+                        if args_list.is_empty() {
+                            format!("{}.as_str()", segment_var)
+                        } else {
+                            format!("{}.as_str(), {}", segment_var, args_list.join(", "))
+                        }
                     };
 
                     writeln!(output, "{}let {} = {}({}).unwrap_or(None);",
@@ -1632,32 +1657,157 @@ fn generate_field_extraction(
                         base_indent, field_name, transform_fn, all_args)?;
                 }
             } else {
-                // Source is not root entity - fall back to placeholder with proper type
-                if is_list_type(field_type) {
-                    writeln!(output, "{}let {}: Vec<String> = vec![]; // TODO: Transform with direct source from {}",
-                        base_indent,
-                        field_name,
-                        source_entity)?;
+                // Source is an intermediate entity (segment or derived entity)
+                // Build variable name for the source
+                let source_var = if let Some(src_field) = source_field {
+                    // Source has a field: entity_field
+                    let source_var_prefix = to_snake_case(source_entity);
+                    format!("{}_{}", source_var_prefix, src_field)
                 } else {
-                    writeln!(output, "{}let {}: Option<String> = {}; // TODO: Transform with direct source from {}",
-                        base_indent,
-                        field_name,
-                        if is_nullable { "None" } else { "Some(String::new())" },
-                        source_entity)?;
+                    // Direct source (no field): check various contexts
+                    // First check if it matches the loop variable from repeating context
+                    if let Some((_parent_name, segment_var, each_known_as)) = repeating_parent_info {
+                        if source_entity == each_known_as {
+                            // This is the loop variable from repeated_for
+                            // Use the actual variable name (segment_var) not the logical name (each_known_as)
+                            segment_var.to_string()
+                        } else if let Some(current_ent) = current_entity {
+                            // Check if source_entity matches a field name in the current entity
+                            if current_ent.fields.iter().any(|f| f.name == source_entity) {
+                                // This is a reference to a field in the same entity
+                                let current_entity_prefix = to_snake_case(&current_ent.name);
+                                format!("{}_{}", current_entity_prefix, source_entity)
+                            } else {
+                                // Not a field reference, just use the entity name
+                                to_snake_case(source_entity)
+                            }
+                        } else {
+                            // No current entity context, just use the entity name
+                            to_snake_case(source_entity)
+                        }
+                    } else if let Some(current_ent) = current_entity {
+                        // Not in repeating context, check if it's a field self-reference
+                        if current_ent.fields.iter().any(|f| f.name == source_entity) {
+                            // This is a reference to a field in the same entity
+                            let current_entity_prefix = to_snake_case(&current_ent.name);
+                            format!("{}_{}", current_entity_prefix, source_entity)
+                        } else {
+                            // Not a field reference, just use the entity name
+                            to_snake_case(source_entity)
+                        }
+                    } else {
+                        // No current entity context, just use the entity name
+                        to_snake_case(source_entity)
+                    }
+                };
+
+                // Get transform arguments
+                let args_list = if let Some(ref args) = computed_from.args {
+                    format_transform_args_list(args)
+                } else {
+                    vec![]
+                };
+
+                // Generate extraction based on transform type
+                match transform.as_str() {
+                    "extract_from_hl7_segment" => {
+                        // Segment extraction with field path
+                        // Combine field_path and component_path into a single path string
+                        let segment_path = if let Some(ref args) = computed_from.args {
+                            let field = args.get("field_path")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let component = args.get("component_path")
+                                .and_then(|v| v.as_str());
+
+                            if let Some(comp) = component {
+                                if !field.is_empty() {
+                                    format!("{}.{}", field, comp)
+                                } else {
+                                    comp.to_string()
+                                }
+                            } else {
+                                field.to_string()
+                            }
+                        } else {
+                            String::new()
+                        };
+
+                        writeln!(output, "{}let {}: Option<String> = extract_from_hl7_segment(",
+                            base_indent, field_name)?;
+                        writeln!(output, "{}    &{},", base_indent, source_var)?;
+                        writeln!(output, "{}    \"{}\"", base_indent, segment_path)?;
+                        writeln!(output, "{}).unwrap_or(None);", base_indent)?;
+                    },
+                    "copy_field" | "copy_field_direct" => {
+                        // Direct field copy
+                        writeln!(output, "{}let {}: Option<String> = {}.clone();",
+                            base_indent, field_name, source_var)?;
+                    },
+                    _ => {
+                        // Other transform function call
+                        let all_args = if args_list.is_empty() {
+                            format!("&{}", source_var)
+                        } else {
+                            format!("&{}, {}", source_var, args_list.join(", "))
+                        };
+
+                        if is_list_type(field_type) {
+                            writeln!(output, "{}let {} = {}({}).unwrap_or_else(|_| vec![]);",
+                                base_indent, field_name, transform_fn, all_args)?;
+                        } else if is_nullable {
+                            writeln!(output, "{}let {} = {}({}).unwrap_or(None);",
+                                base_indent, field_name, transform_fn, all_args)?;
+                        } else {
+                            writeln!(output, "{}let {} = {}({}).unwrap_or_else(|_| String::new());",
+                                base_indent, field_name, transform_fn, all_args)?;
+                        }
+                    }
                 }
             }
         }
     } else {
-        // Multiple sources - not yet implemented
-        if is_list_type(field_type) {
-            writeln!(output, "{}let {}: Vec<String> = vec![]; // TODO: Multi-source extraction",
-                base_indent,
-                field_name)?;
+        // Multiple sources - handle conditional selection or fallback
+        if transform == "copy_field_conditional" {
+            // Conditional selection based on a field value
+            if let Some(ref condition) = computed_from.condition {
+                let cond_source = condition.field.source_name();
+                let cond_field = condition.field.field_name().unwrap_or("value");
+                let cond_equals = &condition.equals;
+
+                let cond_var = format!("{}_{}", to_snake_case(cond_source), cond_field);
+
+                writeln!(output, "{}let {} = if {}.as_ref().map(|s| s == \"{}\").unwrap_or(false) {{",
+                    base_indent, field_name, cond_var, cond_equals)?;
+
+                // True branch: first source
+                let src0_var = build_source_variable_name(&sources[0], repeating_parent_info, current_entity, is_intermediate);
+                writeln!(output, "{}    {}.clone()", base_indent, src0_var)?;
+
+                writeln!(output, "{}}} else {{", base_indent)?;
+
+                // False branch: second source
+                let src1_var = build_source_variable_name(&sources[1], repeating_parent_info, current_entity, is_intermediate);
+                writeln!(output, "{}    {}.clone()", base_indent, src1_var)?;
+
+                writeln!(output, "{}}};", base_indent)?;
+            } else {
+                writeln!(output, "{}let {}: Option<String> = None; // ERROR: conditional without condition",
+                    base_indent, field_name)?;
+            }
         } else {
-            writeln!(output, "{}let {}: Option<String> = {}; // TODO: Multi-source extraction",
-                base_indent,
-                field_name,
-                if is_nullable { "None" } else { "Some(String::new())" })?;
+            // Fallback: use first non-None source
+            write!(output, "{}let {} = ", base_indent, field_name)?;
+            for (i, source) in sources.iter().enumerate() {
+                let src_var = build_source_variable_name(source, repeating_parent_info, current_entity, is_intermediate);
+
+                if i == 0 {
+                    write!(output, "{}.clone()", src_var)?;
+                } else {
+                    write!(output, ".or_else(|| {}.clone())", src_var)?;
+                }
+            }
+            writeln!(output, ";")?;
         }
     }
 
@@ -1665,7 +1815,8 @@ fn generate_field_extraction(
 }
 
 /// Format transform function arguments from YAML value as a list
-fn format_transform_args_list(args: &serde_yaml::Value) -> Vec<String> {
+#[allow(dead_code)]
+pub(super) fn format_transform_args_list(args: &serde_yaml::Value) -> Vec<String> {
     match args {
         serde_yaml::Value::Sequence(seq) => {
             seq.iter()
@@ -1696,7 +1847,8 @@ fn format_transform_args_list(args: &serde_yaml::Value) -> Vec<String> {
 }
 
 /// Format transform function arguments from YAML value (deprecated - use format_transform_args_list)
-fn format_transform_args(args: &serde_yaml::Value) -> String {
+#[allow(dead_code)]
+pub(super) fn format_transform_args(args: &serde_yaml::Value) -> String {
     match args {
         serde_yaml::Value::Mapping(map) => {
             map.iter()

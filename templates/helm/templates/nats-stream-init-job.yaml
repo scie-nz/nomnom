@@ -1,0 +1,60 @@
+{{- if .Values.nats.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "hl7-nomnom-parser.fullname" . }}-nats-stream-init
+  labels:
+    {{- include "hl7-nomnom-parser.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: nats-init
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: nats-stream-init
+        image: natsio/nats-box:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for NATS to be ready..."
+          until nats --server={{ .Release.Name }}-nats:4222 server ping 2>/dev/null; do
+            echo "Waiting for NATS..."
+            sleep 2
+          done
+          echo "NATS is ready!"
+
+          echo "Creating/updating MESSAGES stream..."
+          nats --server={{ .Release.Name }}-nats:4222 stream add MESSAGES \
+            --subjects="messages.ingest.>" \
+            --storage=file \
+            --retention=limits \
+            --discard=old \
+            --max-age=24h \
+            --max-bytes={{ .Values.nats.streams.messages.maxBytes | default "512Mi" }} \
+            --replicas=1 \
+            --defaults || echo "Stream MESSAGES may already exist, continuing..."
+
+          echo "Creating/updating ENTITIES stream..."
+          nats --server={{ .Release.Name }}-nats:4222 stream add ENTITIES \
+            --subjects="entities.*" \
+            --storage=file \
+            --retention=limits \
+            --discard=old \
+            --max-age=24h \
+            --max-bytes={{ .Values.nats.streams.entities.maxBytes | default "512Mi" }} \
+            --replicas=1 \
+            --defaults || echo "Stream ENTITIES may already exist, continuing..."
+
+          echo "NATS streams initialized successfully!"
+          nats --server={{ .Release.Name }}-nats:4222 stream ls
+{{- end }}

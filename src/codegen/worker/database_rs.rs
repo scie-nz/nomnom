@@ -166,23 +166,45 @@ pub fn generate_database_rs(
             for field in &persistence.field_overrides {
                 let col_name = to_snake_case(&field.name);
                 let field_type_str = field.field_type.as_deref().unwrap_or("String");
+                eprintln!("DEBUG: field={}, type={}, args={:?}", field.name, field_type_str, field.args);
                 let sql_type = match field_type_str {
-                    // Note: TEXT works for both PostgreSQL and MySQL (MySQL supports TEXT since 5.0.3)
-                    // MySQL TEXT has 64KB limit vs PostgreSQL's 1GB, but this is sufficient for most use cases
-                    "String" => "TEXT",
-                    "i32" | "Integer" => "INTEGER",
-                    "i64" | "BigInt" => "BIGINT",
-                    "f64" | "Float" | "Decimal" => "NUMERIC",
-                    "bool" | "Boolean" => "BOOLEAN",
-                    "NaiveDate" => "DATE",
-                    "NaiveDateTime" | "DateTime" => "TIMESTAMP",
-                    "Json" | "Object" | "List[Object]" => {
-                        match config.database_type {
-                            DatabaseType::PostgreSQL => "JSONB",
-                            DatabaseType::MySQL | DatabaseType::MariaDB => "JSON",
+                    "String" => {
+                        // Use VARCHAR(length) if args specified, otherwise TEXT
+                        // args format: [100] for VARCHAR(100)
+                        if !field.args.is_empty() {
+                            // Try to get length from first arg
+                            let length_opt = field.args.first().and_then(|v| {
+                                // For serde_yaml::Value::Number, we need to try both as_u64() and as_i64()
+                                // Also try as_f64() and convert to integer
+                                v.as_u64()
+                                    .or_else(|| v.as_i64().map(|i| i as u64))
+                                    .or_else(|| v.as_f64().map(|f| f as u64))
+                            });
+
+                            if let Some(length) = length_opt {
+                                eprintln!("DEBUG: Using VARCHAR({})", length);
+                                format!("VARCHAR({})", length)
+                            } else {
+                                eprintln!("DEBUG: Could not extract length from args, using TEXT");
+                                "TEXT".to_string()
+                            }
+                        } else {
+                            "TEXT".to_string()
                         }
                     },
-                    _ => "TEXT",
+                    "i32" | "Integer" => "INTEGER".to_string(),
+                    "i64" | "BigInt" => "BIGINT".to_string(),
+                    "f64" | "Float" | "Decimal" => "NUMERIC".to_string(),
+                    "bool" | "Boolean" => "BOOLEAN".to_string(),
+                    "NaiveDate" => "DATE".to_string(),
+                    "NaiveDateTime" | "DateTime" => "TIMESTAMP".to_string(),
+                    "Json" | "Object" | "List[Object]" => {
+                        match config.database_type {
+                            DatabaseType::PostgreSQL => "JSONB".to_string(),
+                            DatabaseType::MySQL | DatabaseType::MariaDB => "JSON".to_string(),
+                        }
+                    },
+                    _ => "TEXT".to_string(),
                 };
 
                 let nullable = if field.nullable.unwrap_or(false) { "" } else { " NOT NULL" };

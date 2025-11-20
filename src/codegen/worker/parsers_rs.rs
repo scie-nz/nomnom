@@ -134,6 +134,7 @@ fn generate_parse_line_function(
     // Generate entity type hint matching first
     writeln!(output, "        // If entity_type hint is provided, try that first")?;
     writeln!(output, "        if let Some(entity_type) = entity_type_hint {{")?;
+    writeln!(output, "            eprintln!(\"[PARSER] Trying entity type hint: {{}}\", entity_type);")?;
     writeln!(output, "            match entity_type {{")?;
 
     for entity in entities {
@@ -147,18 +148,29 @@ fn generate_parse_line_function(
         }
 
         writeln!(output, "                \"{}\" => {{", entity.name)?;
-        writeln!(output, "                    if let Ok(msg) = Self::parse_{}(obj) {{", entity.name.to_lowercase())?;
-        writeln!(output, "                        return Ok((\"{}\".to_string(), ParsedMessage::{}(msg), value.clone()));", entity.name, entity.name)?;
+        writeln!(output, "                    match Self::parse_{}(obj) {{", entity.name.to_lowercase())?;
+        writeln!(output, "                        Ok(msg) => {{")?;
+        writeln!(output, "                            eprintln!(\"[PARSER] Successfully parsed as {} (via hint)\");", entity.name)?;
+        writeln!(output, "                            return Ok((\"{}\".to_string(), ParsedMessage::{}(msg), value.clone()));", entity.name, entity.name)?;
+        writeln!(output, "                        }}")?;
+        writeln!(output, "                        Err(e) => {{")?;
+        writeln!(output, "                            eprintln!(\"[PARSER] Failed to parse as {} (via hint): {{:?}}\", e);", entity.name)?;
+        writeln!(output, "                        }}")?;
         writeln!(output, "                    }}")?;
         writeln!(output, "                }}")?;
     }
 
-    writeln!(output, "                _ => {{}}")?;
+    writeln!(output, "                _ => {{")?;
+    writeln!(output, "                    eprintln!(\"[PARSER] Unknown entity type hint: {{}}\", entity_type);")?;
+    writeln!(output, "                }}")?;
     writeln!(output, "            }}")?;
     writeln!(output, "        }}\n")?;
 
     // Generate fallback logic - only try root entities
     writeln!(output, "        // Fallback: Try to parse as each known root entity type")?;
+    writeln!(output, "        eprintln!(\"[PARSER] No type hint or hint failed, trying all known root entities...\");")?;
+    writeln!(output, "        let available_fields: Vec<String> = obj.keys().map(|k| k.to_string()).collect();")?;
+    writeln!(output, "        eprintln!(\"[PARSER] Available fields in JSON: {{:?}}\", available_fields);\n")?;
 
     for entity in entities {
         // Only include root entities
@@ -166,12 +178,20 @@ fn generate_parse_line_function(
             continue;
         }
 
-        writeln!(output, "        if let Ok(msg) = Self::parse_{}(obj) {{", entity.name.to_lowercase())?;
-        writeln!(output, "            return Ok((\"{}\".to_string(), ParsedMessage::{}(msg), value.clone()));", entity.name, entity.name)?;
+        writeln!(output, "        eprintln!(\"[PARSER] Trying to parse as {}...\");", entity.name)?;
+        writeln!(output, "        match Self::parse_{}(obj) {{", entity.name.to_lowercase())?;
+        writeln!(output, "            Ok(msg) => {{")?;
+        writeln!(output, "                eprintln!(\"[PARSER] Successfully parsed as {}\");", entity.name)?;
+        writeln!(output, "                return Ok((\"{}\".to_string(), ParsedMessage::{}(msg), value.clone()));", entity.name, entity.name)?;
+        writeln!(output, "            }}")?;
+        writeln!(output, "            Err(e) => {{")?;
+        writeln!(output, "                eprintln!(\"[PARSER] Failed to parse as {}: {{:?}}\", e);", entity.name)?;
+        writeln!(output, "            }}")?;
         writeln!(output, "        }}")?;
     }
 
-    writeln!(output, "\n        Err(AppError::InvalidFormat(\"Could not parse as any known entity type\".to_string()))")?;
+    writeln!(output, "\n        eprintln!(\"[PARSER] No entity parsers succeeded\");")?;
+    writeln!(output, "        Err(AppError::InvalidFormat(\"Could not parse as any known entity type\".to_string()))")?;
     writeln!(output, "    }}\n")?;
 
     Ok(())
@@ -183,6 +203,38 @@ fn generate_entity_parser(
 ) -> Result<(), Box<dyn Error>> {
     writeln!(output, "    fn parse_{}(obj: &serde_json::Map<String, serde_json::Value>) -> Result<{}Message, AppError> {{",
         entity.name.to_lowercase(), entity.name)?;
+
+    // Collect required field names
+    let mut required_fields = Vec::new();
+    if let Some(ref persistence) = entity.persistence {
+        for field in &persistence.field_overrides {
+            if !field.nullable.unwrap_or(false) {
+                required_fields.push(&field.name);
+            }
+        }
+    } else {
+        for field in &entity.fields {
+            if !field.nullable {
+                required_fields.push(&field.name);
+            }
+        }
+    }
+
+    // Add field checking logic
+    if !required_fields.is_empty() {
+        writeln!(output, "        // Check for required fields")?;
+        writeln!(output, "        let required_fields = vec![{}];",
+            required_fields.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))?;
+        writeln!(output, "        let missing_fields: Vec<String> = required_fields.iter()")?;
+        writeln!(output, "            .filter(|f| !obj.contains_key(**f))")?;
+        writeln!(output, "            .map(|f| f.to_string())")?;
+        writeln!(output, "            .collect();")?;
+        writeln!(output, "        if !missing_fields.is_empty() {{")?;
+        writeln!(output, "            return Err(AppError::InvalidFormat(")?;
+        writeln!(output, "                format!(\"Missing required fields for {}: {{:?}}\", missing_fields)", entity.name)?;
+        writeln!(output, "            ));")?;
+        writeln!(output, "        }}\n")?;
+    }
 
     writeln!(output, "        Ok({}Message {{", entity.name)?;
 

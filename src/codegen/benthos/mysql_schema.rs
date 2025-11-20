@@ -19,14 +19,14 @@ pub fn generate_mysql_schema(
     for field in &entity.fields {
         let column_name = &field.name;
         let column_type = map_field_type_to_mysql(&field.field_type, field.nullable);
-        columns.push(format!("  {} {}", column_name, column_type));
+        columns.push(format!("  `{}` {}", column_name, column_type));
     }
 
     // Add metadata columns
-    columns.push("  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP".to_string());
+    columns.push("  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP".to_string());
 
     // Add indexes
-    columns.push("  INDEX idx_created_at (created_at)".to_string());
+    columns.push("  INDEX `idx_created_at` (`created_at`)".to_string());
 
     // TODO: Add unique constraints based on entity configuration
     // For now, we'll assume message_id + set_id for idempotency if those fields exist
@@ -34,9 +34,9 @@ pub fn generate_mysql_schema(
     let has_set_id = entity.fields.iter().any(|f| f.name == "set_id");
 
     if has_message_id && has_set_id {
-        columns.push("  UNIQUE KEY idx_unique (message_id, set_id)".to_string());
+        columns.push("  UNIQUE KEY `idx_unique` (`message_id`, `set_id`)".to_string());
     } else if has_message_id {
-        columns.push("  INDEX idx_message_id (message_id)".to_string());
+        columns.push("  INDEX `idx_message_id` (`message_id`)".to_string());
     }
 
     Ok(format!(r#"-- Auto-generated MySQL schema for {}
@@ -45,7 +45,7 @@ pub fn generate_mysql_schema(
 -- Source type: {}
 -- Fields: {}
 
-CREATE TABLE IF NOT EXISTS {} (
+CREATE TABLE IF NOT EXISTS `{}` (
 {}
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 "#,
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS {} (
 /// Map entity field type to MySQL column type
 fn map_field_type_to_mysql(field_type: &str, nullable: bool) -> String {
     let base_type = match field_type {
-        "String" => "VARCHAR(1024)",
+        "String" => "TEXT",  // Use TEXT instead of VARCHAR to avoid row size limits
         "Integer" | "i32" | "i64" => "BIGINT",
         "Boolean" | "bool" => "BOOLEAN",
         "DateTime" => "TIMESTAMP",
@@ -81,8 +81,8 @@ mod tests {
 
     #[test]
     fn test_map_field_type_to_mysql() {
-        assert_eq!(map_field_type_to_mysql("String", true), "VARCHAR(1024) NULL");
-        assert_eq!(map_field_type_to_mysql("String", false), "VARCHAR(1024) NOT NULL");
+        assert_eq!(map_field_type_to_mysql("String", true), "TEXT NULL");
+        assert_eq!(map_field_type_to_mysql("String", false), "TEXT NOT NULL");
         assert_eq!(map_field_type_to_mysql("Integer", true), "BIGINT NULL");
         assert_eq!(map_field_type_to_mysql("Boolean", false), "BOOLEAN NOT NULL");
         assert_eq!(map_field_type_to_mysql("DateTime", true), "TIMESTAMP NULL");

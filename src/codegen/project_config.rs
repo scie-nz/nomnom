@@ -487,6 +487,11 @@ impl BuildConfig {
 
     /// Generate Cargo.toml content
     pub fn generate_cargo_toml(&self) -> String {
+        self.generate_cargo_toml_with_database(None)
+    }
+
+    /// Generate Cargo.toml content with optional database override
+    pub fn generate_cargo_toml_with_database(&self, database_type: Option<&str>) -> String {
         let crate_name = self.rust.as_ref()
             .map(|r| r.crate_name.clone())
             .unwrap_or_else(|| format!("{}_rust", self.project.name));
@@ -511,6 +516,11 @@ impl BuildConfig {
         let lib_rs_path = self.paths.outputs.lib_rs.as_ref()
             .map(|p| p.as_str())
             .unwrap_or("src/lib.rs");
+
+        // Determine database type - use provided override, or config, or default to postgres
+        let default_db = database_type
+            .or(self.database.as_ref().and_then(|db| db.r#type.as_deref()))
+            .unwrap_or("postgres");
 
         let mut toml = format!(r#"[package]
 name = "{}"
@@ -556,16 +566,19 @@ regex = "1.10"
 
 # Diesel ORM with connection pooling
 # Backend features (postgres/mysql/mariadb) are controlled by crate features below
-diesel = {{ version = "2.3", features = ["r2d2", "chrono", "numeric"] }}
-diesel_migrations = "2.1"
+# Disable default features to prevent postgres backend from being enabled
+diesel = {{ version = "2.3", default-features = false, features = ["r2d2", "chrono", "numeric", "32-column-tables"] }}
+diesel_migrations = {{ version = "2.1", default-features = false }}
 r2d2 = "0.8"
 chrono = {{ version = "0.4", features = ["serde"] }}
 bigdecimal = {{ version = "0.4", features = ["serde"] }}
 
 # Nomnom entity framework (runtime with python-bridge feature)
-nomnom = {{ path = "{}", features = ["python-bridge"] }}
+# Database feature matches the package's default feature
+# Disable default features to avoid postgres/mysql conflicts
+nomnom = {{ path = "{}", default-features = false, features = ["python-bridge", "{}"] }}
 
-"#, python_module_name, lib_rs_path, nomnom_path));
+"#, python_module_name, lib_rs_path, nomnom_path, default_db));
 
         // Add additional dependencies
         if let Some(deps) = &self.dependencies {
@@ -578,21 +591,22 @@ nomnom = {{ path = "{}", features = ["python-bridge"] }}
         }
 
         // Add features section
-        toml.push_str(r#"
+        toml.push_str(&format!(r#"
 [features]
-default = ["postgres"]
+default = ["{}"]
 postgres = ["diesel/postgres"]
 mysql = ["diesel/mysql"]
 mariadb = ["diesel/mysql"]  # MariaDB uses MySQL driver
 
-"#);
+"#, default_db));
 
         toml.push_str(&format!(r#"
 [build-dependencies]
 serde = {{ version = "1.0", features = ["derive"] }}
 serde_yaml = "0.9"
 glob = "0.3"
-nomnom = {{ path = "{}" }}
+# Disable default features to avoid enabling postgres backend in build scripts
+nomnom = {{ path = "{}", default-features = false }}
 "#, nomnom_path));
 
         toml

@@ -10,7 +10,7 @@ pub fn generate_pipeline_yaml(
     config: &BenthosConfig,
 ) -> Result<String, Box<dyn Error>> {
     let entity_name_snake = to_snake_case(&entity.name);
-    let entity_name_lower = entity.name.to_lowercase();
+    let entity_name = &entity.name;  // Use original CamelCase name for NATS subject
 
     // Extract field names for column mapping
     let mut columns = Vec::new();
@@ -73,11 +73,11 @@ buffer:
 
 output:
   fallback:
-    # Primary: Write to MySQL
+    # Primary: Write to MySQL (with ANSI_QUOTES to escape reserved keywords)
     - sql_insert:
         driver: mysql
-        dsn: "${{MYSQL_USER}}:${{MYSQL_PASSWORD}}@tcp(${{MYSQL_HOST}}:${{MYSQL_PORT}}/${{MYSQL_DATABASE}}?parseTime=true"
-        table: {}
+        dsn: "${{MYSQL_USER}}:${{MYSQL_PASSWORD}}@tcp(${{MYSQL_HOST}}:${{MYSQL_PORT}})/${{MYSQL_DATABASE}}?parseTime=true&sql_mode=ANSI_QUOTES"
+        table: "\"{}\""
         columns: [{}]
         args_mapping: |
           root = [
@@ -121,12 +121,12 @@ http:
   debug_endpoints: false
 "#,
         entity.name,
-        entity_name_lower,
+        entity_name,  // NATS subject uses CamelCase
         entity_name_snake,
         entity_name_snake,
         columns_str,
         args_mapping_str,
-        entity_name_lower,
+        entity_name,  // DLQ subject uses CamelCase
         entity_name_snake,
         entity_name_snake,
         entity.name,

@@ -257,6 +257,10 @@ spec:
             sleep 2
           done
 
+          echo "Creating database if it doesn't exist..."
+          mysql -h $MYSQL_HOST -P $MYSQL_PORT -u $MYSQL_USER -p$MYSQL_PASSWORD -e "CREATE DATABASE IF NOT EXISTS \`$MYSQL_DATABASE\`;"
+          echo "Database '$MYSQL_DATABASE' ready"
+
           echo "Initializing warehouse schemas..."
           for schema in /schemas/*.sql; do
             echo "Applying $schema"
@@ -347,12 +351,23 @@ benthos:
 
   # MySQL warehouse database configuration
   warehouse:
-    host: "mysql-warehouse"
+    # Host should match your MySQL/MariaDB service name
+    # Common values:
+    #   - Bundled MySQL subchart: "<release-name>-mysql"
+    #   - Bundled MariaDB subchart: "<release-name>-mariadb"
+    #   - External database: "mysql.example.com"
+    host: "mysql"
     port: 3306
-    database: "warehouse"
-    username: "benthos"
-    # Reference to Kubernetes secret containing password
-    existingSecret: "mysql-warehouse-credentials"
+    # Database name where Benthos will write transient entities
+    database: "nomnom"
+    # MySQL user with write access to the database
+    username: "nomnom"
+    # Reference to Kubernetes secret containing MySQL password
+    # The secret must have a 'password' key
+    # Common values:
+    #   - Bundled MySQL: "<release-name>-mysql"
+    #   - Custom secret: "my-mysql-credentials"
+    existingSecret: "mysql-credentials"
 
   # NATS JetStream connection (reuses existing NATS from chart)
   nats:

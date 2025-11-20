@@ -86,6 +86,39 @@ pub struct DerivationConfig {
     pub source_entities: Option<serde_yaml::Value>,
 }
 
+/// Source entity specification
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum SourceEntitySpec {
+    /// Simple string format: just entity name (defaults to core)
+    Simple(String),
+
+    /// Detailed format: with configuration
+    Detailed {
+        entity: String,
+        #[serde(default)]
+        ancillary: bool,
+    },
+}
+
+impl SourceEntitySpec {
+    /// Get the entity name
+    pub fn entity_name(&self) -> &str {
+        match self {
+            SourceEntitySpec::Simple(name) => name,
+            SourceEntitySpec::Detailed { entity, .. } => entity,
+        }
+    }
+
+    /// Check if this source is ancillary
+    pub fn is_ancillary(&self) -> bool {
+        match self {
+            SourceEntitySpec::Simple(_) => false,  // Default to core
+            SourceEntitySpec::Detailed { ancillary, .. } => *ancillary,
+        }
+    }
+}
+
 /// Abstract method implementation
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AbstractImplementation {
@@ -303,6 +336,78 @@ pub struct DerivedFrom {
     pub transform: Option<String>,
 }
 
+/// Minimal existence constraint for entity creation
+/// Specifies which fields must be non-empty for the entity to be created
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MinimalExistence {
+    /// Require at least ONE of these fields to be non-empty (OR logic)
+    #[serde(default)]
+    pub require_any: Option<Vec<String>>,
+
+    /// Require ALL of these fields to be non-empty (AND logic)
+    #[serde(default)]
+    pub require_all: Option<Vec<String>>,
+}
+
+impl MinimalExistence {
+    /// Get the list of fields to check
+    pub fn fields(&self) -> Option<&Vec<String>> {
+        self.require_any.as_ref().or(self.require_all.as_ref())
+    }
+
+    /// Check if this is require_any (OR) logic
+    pub fn is_require_any(&self) -> bool {
+        self.require_any.is_some()
+    }
+
+    /// Validate the minimal existence configuration
+    pub fn validate(&self, entity: &EntityDef) -> Result<(), String> {
+        // Rule: Cannot have both require_any and require_all
+        if self.require_any.is_some() && self.require_all.is_some() {
+            return Err(format!(
+                "Entity '{}': Cannot specify both require_any and require_all in minimal_existence",
+                entity.name
+            ));
+        }
+
+        // Get fields to check
+        let fields_to_check = self.fields()
+            .ok_or_else(|| format!(
+                "Entity '{}': minimal_existence must specify either require_any or require_all",
+                entity.name
+            ))?;
+
+        // Rule: At least one field required
+        if fields_to_check.is_empty() {
+            return Err(format!(
+                "Entity '{}': minimal_existence must specify at least one field",
+                entity.name
+            ));
+        }
+
+        // Rule: All fields must exist in entity
+        for field_name in fields_to_check {
+            let field = entity.fields.iter()
+                .find(|f| &f.name == field_name)
+                .ok_or_else(|| format!(
+                    "Entity '{}': Field '{}' in minimal_existence not found in entity definition",
+                    entity.name, field_name
+                ))?;
+
+            // Warning: computed fields
+            if field.computed.is_some() {
+                eprintln!(
+                    "WARNING: Entity '{}': Field '{}' in minimal_existence is computed. \
+                    Consider using source fields instead.",
+                    entity.name, field_name
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Entity definition from YAML
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -355,6 +460,9 @@ pub struct EntityDef {
     /// Message prefix for ingestion server parsing (e.g., "O" for Order, "L" for LineItem)
     #[serde(default)]
     pub prefix: Option<String>,
+    /// Minimal existence constraint - which fields must be present for entity to exist
+    #[serde(default)]
+    pub minimal_existence: Option<MinimalExistence>,
 }
 
 impl EntityDef {
@@ -387,6 +495,55 @@ impl EntityDef {
         } else {
             vec![]
         }
+    }
+
+    /// Get source entity specs with ancillary information
+    /// Returns a map from alias to (entity_name, is_ancillary)
+    pub fn get_source_entity_specs(&self) -> std::collections::HashMap<String, (String, bool)> {
+        use std::collections::HashMap;
+
+        let mut specs = HashMap::new();
+
+        if let Some(ref derivation) = self.derivation {
+            if let Some(ref source_entities) = derivation.source_entities {
+                match source_entities {
+                    // Single source: "ParentEntity"
+                    serde_yaml::Value::String(entity_name) => {
+                        specs.insert(entity_name.clone(), (entity_name.clone(), false));
+                    }
+                    // Multiple sources: {alias: EntityName} or {alias: {entity: EntityName, ancillary: bool}}
+                    serde_yaml::Value::Mapping(map) => {
+                        for (key, value) in map {
+                            if let Some(alias) = key.as_str() {
+                                match value {
+                                    // Simple string: alias: EntityName
+                                    serde_yaml::Value::String(entity_name) => {
+                                        specs.insert(alias.to_string(), (entity_name.clone(), false));
+                                    }
+                                    // Detailed object: alias: {entity: EntityName, ancillary: true}
+                                    serde_yaml::Value::Mapping(obj) => {
+                                        let entity_name = obj.get(&serde_yaml::Value::String("entity".to_string()))
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from);
+                                        let ancillary = obj.get(&serde_yaml::Value::String("ancillary".to_string()))
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false);
+
+                                        if let Some(entity_name) = entity_name {
+                                            specs.insert(alias.to_string(), (entity_name, ancillary));
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        specs
     }
 
     /// Check if entity is a root entity
@@ -474,6 +631,50 @@ impl EntityDef {
         }
 
         None
+    }
+
+    /// Validate ancillary source entity rules
+    /// Returns Err if validation fails
+    pub fn validate_ancillary_sources(&self, all_entities: &[EntityDef]) -> Result<(), String> {
+        let source_specs = self.get_source_entity_specs();
+
+        if source_specs.is_empty() {
+            return Ok(());  // No source entities to validate
+        }
+
+        let mut has_core_entity = false;
+
+        for (alias, (entity_name, is_ancillary)) in &source_specs {
+            let source_entity = all_entities.iter()
+                .find(|e| &e.name == entity_name)
+                .ok_or(format!("Source entity '{}' not found for entity '{}'", entity_name, self.name))?;
+
+            if *is_ancillary {
+                // Rule: Ancillary entities must be singleton
+                let is_repeated = source_entity.repetition.as_ref()
+                    .map(|r| r.to_lowercase() == "repeated")
+                    .unwrap_or(false);
+
+                if is_repeated {
+                    return Err(format!(
+                        "Entity '{}': Ancillary source entity '{}' (alias '{}') must be singleton, but is repeated",
+                        self.name, entity_name, alias
+                    ));
+                }
+            } else {
+                has_core_entity = true;
+            }
+        }
+
+        // Rule: Must have at least one core entity
+        if !has_core_entity {
+            return Err(format!(
+                "Entity '{}' must have at least one core (non-ancillary) source entity",
+                self.name
+            ));
+        }
+
+        Ok(())
     }
 }
 

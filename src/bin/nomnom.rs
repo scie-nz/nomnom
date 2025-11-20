@@ -589,7 +589,7 @@ fn build_parser_binary(
     // Generate Cargo.toml
     println!("\n📦 Generating build configuration...");
     let cargo_toml_path = source_root.join("Cargo.toml");
-    let cargo_toml = build_config.generate_cargo_toml();
+    let cargo_toml = build_config.generate_cargo_toml_with_database(Some(&database_type));
     std::fs::write(&cargo_toml_path, cargo_toml)
         .map_err(|e| format!("Failed to write Cargo.toml: {}", e))?;
     println!("  ✓ Generated Cargo.toml");
@@ -642,7 +642,13 @@ fn build_parser_binary(
 
     // Run cargo build
     println!("\n🦀 Building Rust extension...");
-    let mut cargo_cmd = std::process::Command::new("cargo");
+
+    // Find cargo executable - prefer ~/.cargo/bin/cargo
+    let cargo_exe = std::env::var("HOME")
+        .map(|home| format!("{}/.cargo/bin/cargo", home))
+        .unwrap_or_else(|_| "cargo".to_string());
+
+    let mut cargo_cmd = std::process::Command::new(&cargo_exe);
     cargo_cmd.arg("build").current_dir(&source_root);
     if release {
         cargo_cmd.arg("--release");

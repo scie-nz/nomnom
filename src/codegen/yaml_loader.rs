@@ -67,6 +67,22 @@ pub fn load_entities<P: AsRef<Path>>(dir: P) -> Result<Vec<EntityDef>, String> {
         }
     }
 
+    // Validate ancillary source entity rules
+    for entity in &entities {
+        if let Err(e) = entity.validate_ancillary_sources(&entities) {
+            return Err(e);
+        }
+    }
+
+    // Validate minimal existence constraints
+    for entity in &entities {
+        if let Some(ref minimal_existence) = entity.minimal_existence {
+            if let Err(e) = minimal_existence.validate(entity) {
+                return Err(e);
+            }
+        }
+    }
+
     Ok(entities)
 }
 

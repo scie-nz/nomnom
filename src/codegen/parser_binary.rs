@@ -1008,6 +1008,22 @@ fn generate_execute_to_database_function(
     code.push_str("    // Execute in transaction for atomicity\n");
     code.push_str("    conn.transaction::<_, Box<dyn Error>, _>(|conn| {\n");
 
+    // Collect all unique table names for imports
+    let mut table_names = std::collections::HashSet::new();
+    for entity in extraction_order {
+        if entity.is_persistent(all_entities) && !entity.is_abstract && entity.source_type.to_lowercase() != "reference" {
+            if let Some(db_config) = entity.get_database_config(all_entities) {
+                table_names.insert(db_config.conformant_table.clone());
+            }
+        }
+    }
+
+    // Generate use statements for all unique tables
+    for table_name in &table_names {
+        code.push_str(&format!("        use _rust::schema::{};\n", table_name));
+    }
+    code.push_str("\n");
+
     // Process each persistent entity
     for entity in extraction_order {
         // Skip non-persistent or abstract entities
@@ -1022,8 +1038,16 @@ fn generate_execute_to_database_function(
 
         let var_name = to_snake_case(&entity.name);
         let type_name = format!("{}Core", entity.name);
-        let new_type_name = format!("New{}", entity.name);
-        let model_type_name = entity.name.clone();
+
+        // If entity extends another, use parent's model types for database operations
+        let base_entity_name = if let Some(ref parent_name) = entity.extends {
+            parent_name.clone()
+        } else {
+            entity.name.clone()
+        };
+
+        let new_type_name = format!("New{}", base_entity_name);
+        let model_type_name = base_entity_name;
 
         let db_config = entity.get_database_config(all_entities)
             .expect("Persistent entity must have database config");
@@ -1057,13 +1081,12 @@ fn generate_execute_to_database_function(
             code.push_str("            }\n\n");
 
             // Check if exists
-            code.push_str(&format!("            use _rust::schema::{}::dsl::*;\n", table_name));
-            code.push_str(&format!("            let existing = {}\n", table_name));
+            code.push_str(&format!("            let existing = {}::table\n", table_name));
             for (i, field) in unicity_fields.iter().enumerate() {
                 if i == 0 {
-                    code.push_str(&format!("                .filter({}.eq(&new_item.{}))\n", field, field));
+                    code.push_str(&format!("                .filter({}::{}.eq(&new_item.{}))\n", table_name, field, field));
                 } else {
-                    code.push_str(&format!("                .filter({}.eq(&new_item.{}))\n", field, field));
+                    code.push_str(&format!("                .filter({}::{}.eq(&new_item.{}))\n", table_name, field, field));
                 }
             }
             code.push_str(&format!("                .first::<{}>(conn)\n", model_type_name));
@@ -1080,7 +1103,7 @@ fn generate_execute_to_database_function(
 
             // Insert new record
             code.push_str("                    // Insert new record\n");
-            code.push_str(&format!("                    diesel::insert_into({})\n", table_name));
+            code.push_str(&format!("                    diesel::insert_into({}::table)\n", table_name));
             code.push_str("                        .values(new_item)\n");
             code.push_str("                        .execute(conn)?;\n\n");
 
@@ -1102,13 +1125,12 @@ fn generate_execute_to_database_function(
             code.push_str(&format!("        let new_item: {} = (&results.{}).into();\n\n", new_type_name, var_name));
 
             // Check if exists
-            code.push_str(&format!("        use _rust::schema::{}::dsl::*;\n", table_name));
-            code.push_str(&format!("        let existing = {}\n", table_name));
+            code.push_str(&format!("        let existing = {}::table\n", table_name));
             for (i, field) in unicity_fields.iter().enumerate() {
                 if i == 0 {
-                    code.push_str(&format!("            .filter({}.eq(&new_item.{}))\n", field, field));
+                    code.push_str(&format!("            .filter({}::{}.eq(&new_item.{}))\n", table_name, field, field));
                 } else {
-                    code.push_str(&format!("            .filter({}.eq(&new_item.{}))\n", field, field));
+                    code.push_str(&format!("            .filter({}::{}.eq(&new_item.{}))\n", table_name, field, field));
                 }
             }
             code.push_str(&format!("            .first::<{}>(conn)\n", model_type_name));
@@ -1125,7 +1147,7 @@ fn generate_execute_to_database_function(
 
             // Insert new record
             code.push_str("                // Insert new record\n");
-            code.push_str(&format!("                diesel::insert_into({})\n", table_name));
+            code.push_str(&format!("                diesel::insert_into({}::table)\n", table_name));
             code.push_str("                    .values(new_item)\n");
             code.push_str("                    .execute(conn)?;\n\n");
 

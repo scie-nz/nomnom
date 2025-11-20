@@ -257,6 +257,126 @@ pub fn generate_models(
         }
     }
 
+    // Generate From implementations for derived entities that extend persistent entities
+    // Example: From<&PrimaryCareProviderCore> for NewProvider
+    writeln!(output, "\n// From trait implementations for derived entity cores -> parent model conversions\n")?;
+
+    for entity in entities {
+        // Check if this entity extends another entity
+        if let Some(ref parent_name) = entity.extends {
+            // Load the derived entity's YAML to get its field list
+            let derived_yaml_path = format!("{}/{}.yaml", config_dir, entity.name.to_lowercase());
+            let derived_field_names: std::collections::HashSet<String> =
+                if let Ok(derived_yaml_content) = std::fs::read_to_string(&derived_yaml_path) {
+                    if let Ok(derived_yaml) = serde_yaml::from_str::<EntityWrapper>(&derived_yaml_content) {
+                        // Collect all field names from the derived entity
+                        entity.fields.iter().map(|f| f.name.clone()).collect()
+                    } else {
+                        std::collections::HashSet::new()
+                    }
+                } else {
+                    std::collections::HashSet::new()
+                };
+
+            // Load the parent entity's YAML to check if it has persistence
+            let parent_yaml_path = format!("{}/{}.yaml", config_dir, parent_name.to_lowercase());
+            if let Ok(parent_yaml_content) = std::fs::read_to_string(&parent_yaml_path) {
+                if let Ok(parent_yaml) = serde_yaml::from_str::<EntityWrapper>(&parent_yaml_content) {
+                    if let Some(parent_persistence) = parent_yaml.entity.persistence {
+                        if let Some(parent_db_config) = parent_persistence.database {
+                            // Parent has persistence, generate From implementation
+                            let derived_core_type = format!("crate::generated::{}Core", entity.name);
+                            let parent_new_type = format!("New{}", parent_name);
+
+                            writeln!(output, "impl From<&{}> for {} {{", derived_core_type, parent_new_type)?;
+                            writeln!(output, "    fn from(core: &{}) -> Self {{", derived_core_type)?;
+                            writeln!(output, "        Self {{")?;
+
+                            // Handle primary key if not auto-generated
+                            let has_autogen_pk = if let Some(ref pk_config) = parent_persistence.primary_key {
+                                let is_autogen = pk_config.key_type == "Integer";
+                                if !is_autogen {
+                                    writeln!(output, "            {}: core.{}.clone(),", pk_config.name, pk_config.name)?;
+                                }
+                                is_autogen
+                            } else {
+                                false
+                            };
+
+                            // Convert each field from parent's persistence config
+                            for field in &parent_persistence.field_overrides {
+                                // Skip the conformant ID if it's auto-generated
+                                if parent_db_config.autogenerate_conformant_id {
+                                    if field.name == parent_db_config.conformant_id_column {
+                                        continue;
+                                    }
+                                }
+
+                                // Check if this field exists in the derived entity
+                                let field_exists = derived_field_names.contains(&field.name);
+
+                                if field_exists {
+                                    // Field exists in derived entity - use it
+                                    match field.field_type.as_str() {
+                                        "Float" => {
+                                            // Convert f64 to BigDecimal
+                                            if field.nullable {
+                                                writeln!(output, "            {}: core.{}.and_then(BigDecimal::from_f64),",
+                                                    field.name, field.name)?;
+                                            } else {
+                                                writeln!(output, "            {}: BigDecimal::from_f64(core.{}).unwrap_or_else(|| BigDecimal::from(0)),",
+                                                    field.name, field.name)?;
+                                            }
+                                        },
+                                        "Integer" => {
+                                            // Convert i64 to i32
+                                            if field.nullable {
+                                                writeln!(output, "            {}: core.{}.map(|v| v as i32),",
+                                                    field.name, field.name)?;
+                                            } else {
+                                                writeln!(output, "            {}: core.{} as i32,",
+                                                    field.name, field.name)?;
+                                            }
+                                        },
+                                        _ => {
+                                            // String, Boolean, DateTime
+                                            if field.nullable {
+                                                // Database field is nullable - direct clone
+                                                writeln!(output, "            {}: core.{}.clone(),",
+                                                    field.name, field.name)?;
+                                            } else {
+                                                // Database field is non-nullable - unwrap Option or clone
+                                                // Assume core field might be Option<String>, unwrap with default
+                                                writeln!(output, "            {}: core.{}.clone().unwrap_or_default(),",
+                                                    field.name, field.name)?;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Field doesn't exist in derived entity - use default value
+                                    if field.nullable {
+                                        writeln!(output, "            {}: None,", field.name)?;
+                                    } else {
+                                        match field.field_type.as_str() {
+                                            "Integer" => writeln!(output, "            {}: 0,", field.name)?,
+                                            "Float" => writeln!(output, "            {}: BigDecimal::from(0),", field.name)?,
+                                            "Boolean" => writeln!(output, "            {}: false,", field.name)?,
+                                            _ => writeln!(output, "            {}: String::new(),", field.name)?,
+                                        }
+                                    }
+                                }
+                            }
+
+                            writeln!(output, "        }}")?;
+                            writeln!(output, "    }}")?;
+                            writeln!(output, "}}\n")?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     println!("cargo:rerun-if-changed={}", output_path.display());
     Ok(())
 }
