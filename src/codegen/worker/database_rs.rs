@@ -139,6 +139,7 @@ pub fn generate_database_rs(
 
             // FIX 1: Add primary key column FIRST if autogenerate=true
             if let Some(ref pk_config) = persistence.primary_key {
+                eprintln!("DEBUG: Found primary_key config for {}: name={}, autogenerate={}", entity.name, pk_config.name, pk_config.autogenerate);
                 if pk_config.autogenerate {
                     let pk_type = match config.database_type {
                         DatabaseType::PostgreSQL => {
