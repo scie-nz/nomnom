@@ -48,6 +48,7 @@ mod sql_triggers;
 mod fastapi_backend;
 mod axum_backend;
 mod react_frontend;
+mod htmx_dashboard;
 mod docker;
 mod utils;
 
@@ -55,6 +56,7 @@ pub use sql_triggers::generate_sql_migrations;
 pub use fastapi_backend::generate_backend as generate_fastapi_backend;
 pub use axum_backend::generate_backend as generate_axum_backend;
 pub use react_frontend::generate_frontend;
+pub use htmx_dashboard::generate_htmx_dashboard;
 pub use docker::{generate_dockerfiles, generate_docker_compose};
 pub use utils::{DatabaseType, DashboardConfig, EntityDisplayConfig};
 
@@ -65,6 +67,15 @@ pub enum BackendType {
     FastAPI,
     /// Axum backend (Rust) - direct table polling
     Axum,
+}
+
+/// Frontend type for dashboard
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrontendType {
+    /// React frontend with WebSocket (legacy)
+    React,
+    /// HTMX server-side rendered (lightweight, no build process)
+    Htmx,
 }
 
 use std::path::Path;

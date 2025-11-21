@@ -24,11 +24,8 @@ Components deployed:
 {{- if .Values.ingestion.worker.enabled }}
   ✓ Message Workers
 {{- end }}
-{{- if .Values.dashboard.backend.enabled }}
-  ✓ Dashboard Backend
-{{- end }}
-{{- if .Values.dashboard.frontend.enabled }}
-  ✓ Dashboard Frontend
+{{- if .Values.dashboard.enabled }}
+  ✓ Dashboard (HTMX)
 {{- end }}
 
 ========================================
@@ -68,30 +65,30 @@ Access Information
    POST /ingest/<entity_type>
 {{- end }}
 
-{{- if .Values.dashboard.frontend.enabled }}
+{{- if .Values.dashboard.enabled }}
 
-2. Dashboard Frontend:
-{{- if eq .Values.dashboard.frontend.service.type "NodePort" }}
+2. Dashboard (HTMX):
+{{- if eq .Values.dashboard.service.type "NodePort" }}
 
    Get the NodePort:
-   $ kubectl get svc {{ include "nomnom.dashboard-frontend.fullname" . }} -n {{ .Values.global.namespace }} -o jsonpath='{.spec.ports[0].nodePort}'
+   $ kubectl get svc {{ include "nomnom.dashboard.fullname" . }} -n {{ .Values.global.namespace }} -o jsonpath='{.spec.ports[0].nodePort}'
 
    Access the dashboard at:
    http://<node-ip>:<node-port>
-{{- else if eq .Values.dashboard.frontend.service.type "LoadBalancer" }}
+{{- else if eq .Values.dashboard.service.type "LoadBalancer" }}
 
    Get the LoadBalancer IP:
-   $ kubectl get svc {{ include "nomnom.dashboard-frontend.fullname" . }} -n {{ .Values.global.namespace }}
+   $ kubectl get svc {{ include "nomnom.dashboard.fullname" . }} -n {{ .Values.global.namespace }}
 
    Access the dashboard at:
-   http://<external-ip>:{{ .Values.dashboard.frontend.service.port }}
+   http://<external-ip>:{{ .Values.dashboard.service.port }}
 {{- else }}
 
    Port-forward to access locally:
-   $ kubectl port-forward -n {{ .Values.global.namespace }} svc/{{ include "nomnom.dashboard-frontend.fullname" . }} 3001:{{ .Values.dashboard.frontend.service.port }}
+   $ kubectl port-forward -n {{ .Values.global.namespace }} svc/{{ include "nomnom.dashboard.fullname" . }} 8080:{{ .Values.dashboard.service.port }}
 
    Access the dashboard at:
-   http://localhost:3001
+   http://localhost:8080
 {{- end }}
 {{- end }}
 

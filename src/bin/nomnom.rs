@@ -89,6 +89,10 @@ enum Commands {
         /// Backend type (axum, fastapi)
         #[arg(short, long, default_value = "axum")]
         backend: String,
+
+        /// Frontend type (react, htmx)
+        #[arg(short, long, default_value = "react")]
+        frontend: String,
     },
 
     /// Generate Axum-based HTTP ingestion server
@@ -279,8 +283,8 @@ fn main() {
         Commands::BuildParserBinary { config, output, release, test, database } => {
             build_parser_binary(config, output, release, test, database)
         }
-        Commands::GenerateDashboard { entities, output, database, backend } => {
-            generate_dashboard(entities, output, database, backend)
+        Commands::GenerateDashboard { entities, output, database, backend, frontend } => {
+            generate_dashboard(entities, output, database, backend, frontend)
         }
         Commands::GenerateIngestionServer { entities, output, database, port, name } => {
             generate_ingestion_server(entities, output, database, port, name)
@@ -806,6 +810,7 @@ fn generate_dashboard(
     output: PathBuf,
     database_str: String,
     backend_str: String,
+    frontend_str: String,
 ) -> Result<(), String> {
     println!("🎨 Generating real-time dashboard...\n");
 
@@ -868,16 +873,43 @@ fn generate_dashboard(
 
     println!("🗄️  Database type: {}", db_type.as_str());
     println!("🔧 Backend type: {:?}", backend_type);
+
+    // Parse frontend type
+    let frontend_type = match frontend_str.to_lowercase().as_str() {
+        "react" => nomnom::codegen::dashboard::FrontendType::React,
+        "htmx" => nomnom::codegen::dashboard::FrontendType::Htmx,
+        _ => {
+            return Err(format!(
+                "Unsupported frontend type: '{}'. Supported types: react, htmx",
+                frontend_str
+            ));
+        }
+    };
+
+    println!("🎨 Frontend type: {:?}", frontend_type);
     println!();
 
-    // Generate dashboard
-    nomnom::codegen::dashboard::generate_all(
-        &entities,
-        &output,
-        entities_dir.to_str().ok_or("Invalid entities directory path")?,
-        db_type,
-        backend_type,
-    ).map_err(|e| format!("Dashboard generation failed: {}", e))?;
+    // Generate dashboard based on frontend type
+    match frontend_type {
+        nomnom::codegen::dashboard::FrontendType::Htmx => {
+            // HTMX dashboard is self-contained (no separate frontend)
+            nomnom::codegen::dashboard::generate_htmx_dashboard(
+                &entities,
+                &output,
+                db_type,
+            ).map_err(|e| format!("HTMX dashboard generation failed: {}", e))?;
+        }
+        nomnom::codegen::dashboard::FrontendType::React => {
+            // React dashboard (legacy) with separate backend and frontend
+            nomnom::codegen::dashboard::generate_all(
+                &entities,
+                &output,
+                entities_dir.to_str().ok_or("Invalid entities directory path")?,
+                db_type,
+                backend_type,
+            ).map_err(|e| format!("Dashboard generation failed: {}", e))?;
+        }
+    }
 
     println!("\n✨ Dashboard generated successfully!");
     println!("📁 Output directory: {}", output.display());

@@ -81,19 +81,11 @@ app.kubernetes.io/component: worker
 {{- end }}
 
 {{/*
-Component labels for Dashboard Backend
+Component labels for Dashboard
 */}}
-{{- define "nomnom.dashboard-backend.labels" -}}
+{{- define "nomnom.dashboard.labels" -}}
 {{ include "nomnom.labels" . }}
-app.kubernetes.io/component: dashboard-backend
-{{- end }}
-
-{{/*
-Component labels for Dashboard Frontend
-*/}}
-{{- define "nomnom.dashboard-frontend.labels" -}}
-{{ include "nomnom.labels" . }}
-app.kubernetes.io/component: dashboard-frontend
+app.kubernetes.io/component: dashboard
 {{- end }}
 
 {{/*
@@ -125,17 +117,10 @@ Worker fullname
 {{- end }}
 
 {{/*
-Dashboard backend fullname
+Dashboard fullname
 */}}
-{{- define "nomnom.dashboard-backend.fullname" -}}
-{{- printf "%s-dashboard-backend" (include "nomnom.fullname" .) | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{/*
-Dashboard frontend fullname
-*/}}
-{{- define "nomnom.dashboard-frontend.fullname" -}}
-{{- printf "%s-dashboard-frontend" (include "nomnom.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- define "nomnom.dashboard.fullname" -}}
+{{- printf "%s-dashboard" (include "nomnom.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
